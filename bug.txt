@@ -1,0 +1,17 @@
+
+
+00CD: --BA---- 00:CC 0001 108B 1036 1100[85] :LD EA, FFD4
+00CF: --BA---- 80:00 0001 108B 1036 1100[BD] :SUB EA, FFE8
+00D1: COBA---- 7F:FF 0001 108B 1036 1100[BD] :SUB EA, FFD6
+00D3: C-BA---- 7F:FF 0001 108B 1036 1100[06] :LD A,S
+00D4: C-BA---- 7F:B0 0001 108B 1036 1100[64] :BP +02
+00D6: C-BA---- 7F:B0 0001 108B 1036 1100[1F] :CALL15
+
+00cc: 85					DB		=X'85  			; not a number, skip to DIRECT
+00cd: 85 d4					LD		EA, TXTBGN	8000	; start of program
+00cf: bd e8					SUB		EA, ONE    	7fff	; minus 1
+00d1: bd d6					SUB		EA, TXTUNF	7fff	; subtract end of program
+00d3: 06					LD		A, S    		; get status
+00d4: 64 02					BP		MAINL3   			; overflow? no, skip
+00d6: 1f					CALL	15				; ERROR
+00d7: 01					DB 		=1				; 1 (out of mem)

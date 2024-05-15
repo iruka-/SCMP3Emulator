@@ -17,50 +17,18 @@
 
 #define PATCH_ROM 1
 
+
 static uint8_t ramrom[65536];
 static uint8_t fast;
-static volatile unsigned done;
+//static 
+volatile unsigned done;
 static unsigned trace;
 struct ns8070 *cpu;
 static uint8_t pendc;			/* Pending char */
-
-struct ns8070 {
-    uint16_t pc;
-    uint16_t t;
-    uint16_t sp;
-    uint16_t p2;
-    uint16_t p3;
-    uint8_t a;
-    uint8_t e;
-    uint8_t s;
-    uint8_t *rom;
-    uint8_t ram[64];
-
-    uint8_t i;
-    uint8_t int_latch;
-#define INT_A	1
-#define INT_B	2
-    uint8_t input;
-
-    int trace;			/* TODO */
-};
+//static 
+int vcount = 0;
 
 
-/* Our little I/O ROM so we don't have decode bitbanging */
-static const uint8_t iorom[] = {
-/* FD00 */	0x00,			/* external I/O */
-/* FD01 */	0x05,0xFD,		/* address of get helper */
-/* FD03 */	0x0A,0xFD,		/* address of put helper */
-/* FD05 */	0xC2,0xFF,		/* LD A,-1(P2)   P2 is FD00 so this reads FCFF */
-/* FD07 */	0x6C,0xFC,		/* BZ -5 */
-/* FD09 */	0x5C,			/* RET */
-/* FD0A */	0xCA,0xF5,		/* ST A,-0B(P2)  again FCFF */
-/* FD0C */	0x5C			/* RET */
-};
-	
-#define TRACE_MEM	1
-#define TRACE_IO	2
-#define TRACE_CPU	4
 
 int check_chario(void)
 {
@@ -88,6 +56,23 @@ int check_chario(void)
 	return r;
 }
 
+int  ns8070_emu_getc(void)
+{
+	int rc;
+	uint8_t r = pendc;
+		if (r) {
+			pendc = 0;
+			ns8070_set_a(cpu, 1);
+			rc = write(1, &r, 1);
+		}
+	return r;
+	(void)rc;
+}
+void ns8070_emu_putc(char r)
+{
+	int rc = write(1, &r, 1);
+	(void)rc;
+}
 unsigned int next_char(void)
 {
 	char c;
@@ -113,54 +98,19 @@ unsigned int next_char(void)
 	return c;
 }
 
-uint8_t ns8070_read_op(struct ns8070 *cpu, uint16_t addr, int debug)
+
+void ns8070_emu_chario(void)
 {
-	if (addr == 0xFCFF) {
-		uint8_t r = pendc;
-		if (r) {
-			pendc = 0;
+	if (check_chario() & 1) {
+		pendc  = next_char();
+		/* The TinyBASIC expects break type conditions
+		 that persist for a while - this is a fudge */
+		if (pendc == 3)
+			ns8070_set_a(cpu, 0);
+		else
 			ns8070_set_a(cpu, 1);
-			write(1, &r, 1);
-		}
-		return r;
 	}
-	if (addr >= 0xFD00 && addr < 0xFD00 + sizeof(iorom))
-		return iorom[addr - 0xFD00];
-        if (addr >= 0x2000)
-            return 0xFF;
-        return ramrom[addr];
 }
-
-uint8_t mem_debug_read(struct ns8070 *cpu, uint16_t addr)
-{
-	return ns8070_read_op(cpu, addr, 1);
-}
-
-uint8_t mem_read(struct ns8070 *cpu, uint16_t addr)
-{
-	return ns8070_read_op(cpu, addr, 0);
-}
-
-void mem_write(struct ns8070 *cpu, uint16_t addr, uint8_t val)
-{
-    if (addr == 0xFCFF) {
-    	val &= 0x7F;
-    	write(1, &val, 1);
-    }
-    /* BASIC and spare ROM */
-    if (addr < 0x1000)
-        return;
-    if (addr < 0x2000)
-        ramrom[addr] = val;
-}
-
-void flag_change(struct ns8070 *cpu, uint8_t fbits)
-{
-}
-
-/*static void poll_irq_event(void)
-{
-} */
 
 static struct termios saved_term, term;
 
@@ -173,6 +123,8 @@ static void cleanup(int sig)
 static void exit_cleanup(void)
 {
 	tcsetattr(0, TCSADRAIN, &saved_term);
+	fprintf(stderr,
+		"vcount=%d\n",vcount);
 }
 
 static void usage(void)
@@ -206,8 +158,8 @@ void mem_dump(char *msg,int adr,void *ptr,int len)
 
 void dumpreg(struct ns8070 *cpu)
 {
-	mem_dump("ram",0xffc0,&cpu->ram[0]     ,64);
-//	mem_dump("rom",0xff00,&cpu->rom[0xff00],256);
+//	mem_dump("ram",0xffc0,&cpu->ram[0]     ,64);
+	mem_dump("rom",0xff00,&cpu->rom[0xffc0],64);
 }
 
 //#define ROMSIZE	2560
@@ -242,7 +194,7 @@ int main(int argc, char *argv[])
 
 		
 	if (rom) {
-		memset(ramrom,0xff,sizeof(ramrom) );
+		//memset(ramrom,0xff,sizeof(ramrom) );
 
 		fd = open(rompath, O_RDONLY);
 		if (fd == -1) {
@@ -293,26 +245,7 @@ int main(int argc, char *argv[])
 	   should track how much real time has occurred and try to keep cycle
 	   matched with that. The scheme here works fine except when the host
 	   is loaded though */
+	ns8070_executes(cpu);
 
-	while (!done) {
-		/* TODO: timing, ints etc */
-		ns8070_execute_one(cpu);
-#if 0
-		// for debug.
-		if ( cpu->pc == 0x00d5 ) { dumpreg(cpu);}
-		if ( cpu->pc == 0x03c0 ) { dumpreg(cpu);}
-		if(( cpu->pc >= 0x0090 ) &&( cpu->pc <= 0x009f ) ){ dumpreg(cpu);}
-		if ( cpu->pc == 0x0046 ) { dumpreg(cpu); exit(1);}
-#endif		
-		if (check_chario() & 1) {
-			pendc  = next_char();
-			/* The TinyBASIC expects break type conditions
-			   that persist for a while - this is a fudge */
-			if (pendc == 3)
-				ns8070_set_a(cpu, 0);
-			else
-				ns8070_set_a(cpu, 1);
-		}
-	}
 	exit(0);
 }

@@ -22,57 +22,85 @@
  *	-	T after a divide is wrong
  *	-	No undocumented instruction behaviour
  */
+extern   volatile unsigned done;
+extern   int vcount ;
 
-struct ns8070 {
-    uint16_t pc;
-    uint16_t t;
-    uint16_t sp;
-    uint16_t p2;
-    uint16_t p3;
-    uint8_t a;
-    uint8_t e;
-    uint8_t s;
-    uint8_t *rom;
-    uint8_t ram[64];
-
-    uint8_t i;
-    uint8_t int_latch;
-#define INT_A	1
-#define INT_B	2
-    uint8_t input;
-
-    int trace;			/* TODO */
+/* Our little I/O ROM so we don't have decode bitbanging */
+static const uint8_t iorom[] = {
+/* FD00 */	0x00,			/* external I/O */
+/* FD01 */	0x05,0xFD,		/* address of get helper */
+/* FD03 */	0x0A,0xFD,		/* address of put helper */
+/* FD05 */	0xC2,0xFF,		/* LD A,-1(P2)   P2 is FD00 so this reads FCFF */
+/* FD07 */	0x6C,0xFC,		/* BZ -5 */
+/* FD09 */	0x5C,			/* RET */
+/* FD0A */	0xCA,0xF5,		/* ST A,-0B(P2)  again FCFF */
+/* FD0C */	0x5C			/* RET */
 };
+	
+#define RAM_END   0x8000
 
-
-static uint8_t mread(struct ns8070 *cpu, uint16_t addr)
+#if 0
+void mem_write(struct ns8070 *cpu, uint16_t addr, uint8_t val)
 {
-    if (addr >= 0xFFC0)
-        return cpu->ram[addr - 0xFFC0];
-    if (cpu->rom && addr < 0xA00)
+    if (addr == 0xFCFF) {
+    	val &= 0x7F;
+		ns8070_emu_putc(val);
+    }
+    /* BASIC and spare ROM */
+    if (addr < 0x1000) {
+        return;
+	}
+    if (addr < RAM_END) {
+        cpu->rom[addr] = val;
+	}
+}
+#endif
+
+static inline uint8_t mread(struct ns8070 *cpu, uint16_t addr)
+{
+	if (addr == 0xFCFF) {
+		return ns8070_emu_getc();
+	}
+    if (addr >= 0xFD00) {
         return cpu->rom[addr];
-    return mem_read(cpu, addr);
+	}
+	if (addr < RAM_END) {
+		return cpu->rom[addr];
+	}
+	return 0xFF;
 }
 
-static uint16_t mread16(struct ns8070 *cpu, uint16_t addr)
+static inline uint16_t mread16(struct ns8070 *cpu, uint16_t addr)
 {
     uint16_t val = mread(cpu, addr);
     val |= mread(cpu, addr + 1) << 8;
     return val;
 }
 
-static void mwrite(struct ns8070 *cpu, uint16_t addr, uint8_t val)
+static inline void mwrite(struct ns8070 *cpu, uint16_t addr, uint8_t val)
 {
+	if (addr == 0xFCFF) {
+    	val &= 0x7F;
+		ns8070_emu_putc(val);
+		return;
+    }
     if (addr >= 0xFFC0) {
-        cpu->ram[addr - 0xFFC0] = val;
+        cpu->rom[addr] = val;
         return;
-    }
-    else if (!cpu->rom || addr >= 0xA00) {
-        mem_write(cpu, addr, val);
-        return;
-    }
-    if (cpu->trace)
-        fprintf(stderr, "Write to ROM 0x%04X<-%02X\n", addr, val);
+	}
+	if (addr < 0xA00) {
+		if (cpu->trace) {
+			fprintf(stderr, "Write to ROM 0x%04X<-%02X\n", addr, val);
+		}
+		return;
+	}
+    if (addr < RAM_END) {
+        cpu->rom[addr] = val;
+	}
+}
+
+void flag_change(struct ns8070 *cpu, uint8_t fbits)
+{
 }
 
 /* Only defined for 16bit unsigned divided by 15bit  */
@@ -523,7 +551,7 @@ static void push16(struct ns8070 *cpu, uint16_t val)
     mwrite(cpu, --cpu->sp, val);
 }
 
-static unsigned int check_interrupt(struct ns8070 *cpu)
+static inline unsigned int check_interrupt(struct ns8070 *cpu)
 {
     if (!(cpu->s & S_IE))
         return 0;
@@ -597,12 +625,14 @@ static unsigned int execute_high(struct ns8070 *cpu)
         else
             val = get_imm16(cpu);
         immed = 1;
-    } else
+    } else {
         addr = make_address(cpu, mode, get_imm8_q(cpu));
-
-    if (mode >= 6)
+	}
+		
+    if (mode >= 6) {
         cost += 2;
-
+	}
+		
     switch(op) {
     case 0x80:	/* LD EA, */
         if (!immed)
@@ -1017,7 +1047,7 @@ static unsigned int execute_op(struct ns8070 *cpu)
     }
 }
 
-unsigned int ns8070_execute_one(struct ns8070 *cpu)
+inline unsigned int ns8070_execute_one(struct ns8070 *cpu)
 {
     unsigned int clocks = 0;
     clocks += check_interrupt(cpu);
@@ -1026,6 +1056,30 @@ unsigned int ns8070_execute_one(struct ns8070 *cpu)
     if (cpu->trace)
         fprintf(stderr, "\n");
     return clocks;
+}
+
+unsigned int ns8070_executes(struct ns8070 *cpu)
+{
+	while (1) {
+		/* TODO: timing, ints etc */
+		ns8070_execute_one(cpu);
+		vcount++;
+#if 0
+		// for debug.
+		if ( cpu->pc == 0x00d5 ) { dumpreg(cpu);}
+		if ( cpu->pc == 0x03c0 ) { dumpreg(cpu);}
+		if(( cpu->pc >= 0x0090 ) &&( cpu->pc <= 0x009f ) ){ dumpreg(cpu);}
+		if ( cpu->pc == 0x0046 ) { dumpreg(cpu); exit(1);}
+#endif		
+
+		if((vcount & 0xfffff)==0){
+			ns8070_emu_chario();
+			if(done) {
+				break;
+			}
+		}
+	}
+	return 0;
 }
 
 void ns8070_reset(struct ns8070 *cpu)
@@ -1047,7 +1101,10 @@ struct ns8070 *ns8070_create(uint8_t *rom)
     }
     cpu->rom = rom;
     cpu->trace = 0;
-    ns8070_reset(cpu);
+
+    memcpy(&cpu->rom[0xfd00],iorom,sizeof(iorom));
+	
+	ns8070_reset(cpu);
     return cpu;
 }
 

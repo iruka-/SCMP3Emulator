@@ -1,6 +1,7 @@
 
 #CFLAGS = -Wall -pedantic -g3 -Werror
-CFLAGS = -Wall -pedantic -g3
+#CFLAGS = -Wall -pedantic -g3
+CFLAGS = -Wall -O3
 
 #
 # Default Target
@@ -12,6 +13,9 @@ all2:	scmp2
 #
 # Test (SC/MP-III)
 #
+tr:
+	./nybbles -r 8073NIBL.bin -d 7   2>trace.log
+
 trace:
 	./nybbles -r 8073NIBL.bin -d 7   2>trace.log
 
@@ -35,16 +39,14 @@ debug2:
 nybbles: nybbles.o ns807x.o
 	cc -g3 nybbles.o ns807x.o -o nybbles
 
-scmp2:	scmp2.o ns806x.o 
-	cc -g3 scmp2.o ns806x.o -o scmp2
-
-#scmp2:	scmp2.o ns806x.o debug.o
-#	cc -g3 scmp2.o ns806x.o debug.o -o scmp2
+scmp2:	scmp2.o ns806x.o debug.o
+	cc -g3 scmp2.o ns806x.o debug.o -o scmp2
 
 clean:
 	-rm *.o
 	-rm *~
 	-rm err
+	-rm nybbles
 
 
 SRCS := $(subst ./,,$(shell find . -name '*.c'))

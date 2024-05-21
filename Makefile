@@ -6,8 +6,9 @@ CFLAGS = -Wall -O3
 #
 # Default Target
 #
-all1:	nybbles 
+all3:	nibl3
 all2:	scmp2
+all1:	nybbles 
 
 
 #
@@ -41,6 +42,12 @@ nybbles: nybbles.o ns807x.o
 
 scmp2:	scmp2.o ns806x.o debug.o
 	cc -g3 scmp2.o ns806x.o debug.o -o scmp2
+
+nibl3:
+	asl -L nibl3.asm
+	p2bin nibl3.p
+	p2hex nibl3.p
+	xdump nibl3.bin >nibl3.dmp
 
 clean:
 	-rm *.o

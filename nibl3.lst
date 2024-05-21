@@ -1,0 +1,2342 @@
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 1 - 2024年05月21日 11時24分42秒
+
+
+    1/   0 :                            ; This listing was reverse engineered and commented from a dump of the 8073N ROM
+    2/   0 :                            ; It may look like valid SC/MP-III assembler, but probably isn't. This is purely for
+    3/   0 :                            ; reference - not for feeding into an assembler program.
+    4/   0 :                            ; Analysed and commented by Holger Veit (20140315)
+    5/   0 :                            		cpu 8070
+    6/   0 :                            ; locations in on-chip RAM
+    7/   0 : =0xFFC0                    MULOV	=	0xffc0					; DW high 16 bit from MPY
+    8/   0 : =0xFFC2                    INPMOD	=	0xffc2					; DB input mode: 0x00 interactive, <>0 in INPUT, 01: running
+    9/   0 : =0xFFC3                    CURRNT	= 	0xffc3					; DW current line number executed
+   10/   0 : =0xFFC5                    RUNMOD	=	0xffc5					; DB runmode 'R', 0x00
+   11/   0 : =0xFFC6                    EXTRAM	=	0xffc6					; DW start of variables (26 words)
+   12/   0 : =0xFFC8                    AESTK	=	0xffc8					; DW start of arithmetic stack (13 words)
+   13/   0 : =0xFFCA                    SBRSTK	=	0xffca					; DW start of GOSUB stack (10 words)
+   14/   0 : =0xFFCC                    DOSTK	=	0xffcc					; DW start of DO stack (10 words)
+   15/   0 : =0xFFCE                    FORSTK	=	0xffce					; DW start of FOR stack (28 words)
+   16/   0 :                            
+   17/   0 : =0xFFD0                    BUFAD	=	0xffd0					; DW
+   18/   0 : =0xFFD2                    STACK	=	0xffd2					; DW top of stack
+   19/   0 : =0xFFD4                    TXTBGN	=	0xffd4					; DW start of program area
+   20/   0 : =0xFFD6                    TXTUNF	=	0xffd6					; DW
+   21/   0 : =0xFFD8                    TXTEND	=	0xffd8					; DW end of program area
+   22/   0 : =0xFFDA                    DOPTR	=	0xffda					; DW ptr to DO level?
+   23/   0 : =0xFFDC                    FORPTR	=	0xffdc					; DW ptr to FOR level?
+   24/   0 : =0xFFDE                    SBRPTR	= 	0xffde					; DW ptr to GOSUB level?
+   25/   0 :                            
+   26/   0 : =0xFFE0                    INTVEC	=	0xffe0					; DW current interrupt vector
+   27/   0 : =0xFFE2                    INTAVC	=	0xffe2					; DW Interrupt A vector
+   28/   0 : =0xFFE4                    INTBVC	=	0xffe4					; DW Interrupt B vector
+   29/   0 : =0xFFE6                    BRKFLG	=	0xffe6					; DB if 0 check for BREAK from serial
+   30/   0 : =0xFFE7                    NOINT	=	0xffe7					; DB flag to suppress INT after having set STAT
+   31/   0 :                            
+   32/   0 : =0xFFE8                    ONE		= 	0xffe8					; DW constant 1
+   33/   0 : =0xFFEA                    ZERO	= 	0xffea					; DW constant 0
+   34/   0 : =0xFFEC                    DLYTIM	=	0xffec					; DW delay value for serial I/O
+   35/   0 : =0xFFEE                    CONTP	=	0xffee					; DW buffer pointer for CONT
+   36/   0 :                            
+   37/   0 : =0xFFF0                    TMPF0	=	0xfff0					; DW temporary for moving program code for insertion
+   38/   0 : =0xFFF2                    TMPF2	=	0xfff2					; DW temp store for current program pointer
+   39/   0 :                            
+   40/   0 : =0xFFF4                    RNDNUM	=	0xfff4					; DW rnd number
+   41/   0 :                            
+   42/   0 : =0xFFF6                    TMPF6	=	0xfff6					; DB,DW temporary
+   43/   0 : =0xFFF8                    UNUSE1	=	0xfff8					; DW unused
+   44/   0 : =0xFFFB                    TMPFB	=	0xfffb					; DB,DW temporary
+   45/   0 : =0xFFFC                    TMPFC	=	0xfffc					; DB,DW temporary (overlaps TMPFB)
+   46/   0 : =0xFFFE                    TMPFE	=	0xfffe					; DW temporary, alias
+   47/   0 :                            
+   48/   0 :                            ; more constants
+   49/   0 : =0x1000                    RAMBASE	=	0x1000					; start of RAM
+   50/   0 : =0x8000                    ROMBASE	=	0x8000					; potential start of a ROM
+   51/   0 : =0xFD00                    BAUDFLG	=	0xFD00					; address of baudrate selection bits
+   52/   0 :                            
+   53/   0 : =0x8                       BS		=	0x08					; back space
+   54/   0 : =0xD                       CR		=	0x0d					; carriage return
+   55/   0 : =0xA                       LF		=	0x0a					; line feed
+   56/   0 : =0x15                      NAK		=	0x15					; CTRL-U, NAK
+   57/   0 : =' '                       SPACE	=	' '						; space character
+   58/   0 : ='>'                       GTR		=	'>'						; prompt for interactive mode
+   59/   0 : ='?'                       QUEST	=	'?'						; prompt for input mode
+   60/   0 : ='^'                       CARET	=	'^'						; prefix for CTRL output
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 2 - 2024年05月21日 11時24分42秒
+
+
+   61/   0 :                            
+   62/   0 :                            
+   63/   0 :                            ; interpreter starts here
+   64/   0 :                            ; assumptions "should be" refer to 1K RAM at 0x1000-0x13ff)
+   65/   0 :                            			ORG	0
+   66/   0 : 00                         			NOP    					; lost byte because of PC preincrement
+   67/   1 : 24 09 00                   			JMP 	COLD			; Jump to cold start
+   68/   4 : 24 B9 08                   			JMP		INTA			; Jump to interrupt a handler
+   69/   7 : 24 BE 08                   			JMP 	INTB			; Jump to interrupt b handler
+   70/   A : 84 00 80                   COLD:		LD		EA, =ROMBASE	; bottom address of ROM
+   71/   D : 8D D4                      COLD1:		ST		EA, TXTBGN		; set begin of text to ROM
+   72/   F : 84 00 10                   			LD		EA, =RAMBASE	; set P2 to point to base of RAM
+   73/  12 : 46                         			LD 		P2, EA			;
+   74/  13 : 20 72 00                   COLD2:		JSR 	TSTRAM			; test for RAM at loc P2
+   75/  16 : 7C FB                      			BNZ 	COLD2			; not zero: no RAM, loop
+   76/  18 : 32                         			LD 		EA, P2			; found RAM, get address
+   77/  19 : BC 01 00                   			SUB 	EA, =1			; subtract 1 to get the current position
+   78/  1C : 7C F5                      			BNZ 	COLD2			; is not at xx00, search next
+   79/  1E : 74 20                      			BRA 	COLD3			; found a page skip over call tbl, continue below
+   80/  20 :                            
+   81/  20 :                            ; short CALL table
+   82/  20 : 3B 06                      			DW		RELEXP-1			; call 0 (RELEXP)
+   83/  22 : EE 06                      			DW		FACTOR-1  		; call 1 (FACTOR)
+   84/  24 : 46 08                      			DW		SAVOP-1    		; call 2 (SAVOP)
+   85/  26 : 79 06                      			DW		COMPAR-1		; call 3 (COMPAR)
+   86/  28 : 39 08                      			DW		APUSH-1			; call 4 (APUSH)
+   87/  2A : 49 08                      			DW		APULL-1			; call 5 (APULL)
+   88/  2C : 02 02                      			DW		ENDCMD-1		; call 6 (ENDCMD)
+   89/  2E : 82 09                      			DW		PUTC-1			; call 7 (PUTC)
+   90/  30 : 7D 09                      			DW		CRLF-1			; call 8 (CRLF)
+   91/  32 : 4C 05                      			DW		GETCHR-1		; call 9 (GETCHR)
+   92/  34 : 01 08                      			DW		NEGATE-1		; call 10 (NEGATE)
+   93/  36 : 13 06                      			DW		CMPTOK-1		; call 11 (CMPTOK)
+   94/  38 : 5D 05                      			DW		EXPECT-1		; call 12 (EXPECT c, offset)
+   95/  3A : 94 05                      			DW		NUMBER-1		; call 13 (NUMBER, offset)
+   96/  3C : 3E 05                      			DW		PRTLN-1			; call 14 (PRTLN)
+   97/  3E : CC 08                      			DW		ERROR-1			; call 15 (ERROR)
+   98/  40 :                            
+   99/  40 :                            ; continues here from cold start
+  100/  40 : 8D C6                      COLD3:		ST		EA, EXTRAM		; arrive here with xx00, store it (should be 0x1000)
+  101/  42 : B4 00 01                   			ADD		EA, =0x0100		; add 256
+  102/  45 : 8D D2                      			ST		EA, STACK		; store as STACK address (should be 0x1100)
+  103/  47 : 45                         			LD		SP, EA    		; initialize stack pointer
+  104/  48 : 20 72 00                   COLD4:		JSR 	TSTRAM			; check RAM at current pos P2 (should be 0x1000)
+  105/  4B : 6C FB                      			BZ		COLD4			; advance until no longer RAM
+  106/  4D :                            									; P2 points to last RAM+2
+  107/  4D : C6 FE                      			LD		A, @-2, P2		; subtract 2 from P2
+  108/  4F : 32                         			LD		EA, P2    		; get last RAM address
+  109/  50 : 8D D8                      			ST		EA, TXTEND		; store at end of text (should be 0x13ff)
+  110/  52 : 85 D4                      			LD		EA, TXTBGN		; load begin of ROM text (0x8000)
+  111/  54 : 46                         			LD		P2, EA    		; put into P2
+  112/  55 : 20 72 00                   			JSR 	TSTRAM			; is there RAM?
+  113/  58 : 6C 03                      			BZ		COLD5			; yes, skip
+  114/  5A : 24 D9 01                   			JMP		RUN				; no, this could be a ROM program, run it
+  115/  5D : 85 D2                      COLD5:		LD		EA, STACK		; get stack top
+  116/  5F : BD D4                      			SUB		EA, TXTBGN		; subtract begin of program
+  117/  61 : 06                         			LD		A, S   			; get carry bit
+  118/  62 : 64 04                      			BP		COLD6			; not set, skip
+  119/  64 : 85 D2                      			LD		EA, STACK		; get stack top
+  120/  66 : 8D D4                      			ST 		EA, TXTBGN		; make it new TXTBGN
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 3 - 2024年05月21日 11時24分42秒
+
+
+  121/  68 : C5 C5                      COLD6:		LD 		A, RUNMOD  		; get mode
+  122/  6A : E4 52                      			XOR 	A, ='R'			; is it 'R'?
+  123/  6C : 6C 2C                      			BZ		MAINLP			; yes, skip
+  124/  6E : 20 C0 05                   			JSR		INITAL			; intialize all interpreter variables
+  125/  71 : 74 1E                      			BRA		MAIN			; continue
+  126/  73 :                            
+  127/  73 :                            	; check RAM at loc P2; return 0 if found, nonzero if no RAM
+  128/  73 : C6 01                      TSTRAM:		LD		A, @1, P2		; get value from RAM, autoincrement
+  129/  75 : 48                         			LD		E, A    		; save old value into E (e.g. 0x55)
+  130/  76 : E4 FF                      			XOR		A, =0xff			; complement value (e.g. 0xAA)
+  131/  78 : CA FF                      			ST		A, -1, P2    	; store it back (0xAA)
+  132/  7A : E2 FF                      			XOR		A, -1, P2		; read back and compare (should be 0x00)
+  133/  7C : 01                         			XCH		A, E    		; A=old value, E=0x00 (if RAM)
+  134/  7D : CA FF                      			ST		A, -1, P2    	; store back old value
+  135/  7F : E2 FF                      			XOR		A, -1, P2		; read back and compare (should be 0x00)
+  136/  81 : 58                         			OR		A, E   			; or both tests, should be 0x00 if RAM)
+  137/  82 : 5C                         			RET						; return zero, if RAM, nonzero if none
+  138/  83 :                            
+  139/  83 :                            ; NEW command
+  140/  83 : 20 C0 05                   NEW:		JSR		INITAL			; initialize interpreter variables
+  141/  86 : C2 00                      			LD		A, 0, P2		; get a char from current program position (initially ROMBASE)
+  142/  88 : E4 0D                      			XOR		A, =CR			; is char a CR?
+  143/  8A : 6C 05                      			BZ		MAIN			; yes, skip to program
+  144/  8C : 10                         			CALL	0
+  145/  8D : 15                         			CALL	5    			; APULL
+  146/  8E : 24 0C 00                   			JMP		COLD1    		; back to cold start
+  147/  91 :                            
+  148/  91 : 85 D4                      MAIN: 		LD		EA, TXTBGN		; get start of program area
+  149/  93 : 8D D6                      			ST		EA, TXTUNF		; store as end of program
+  150/  95 : 46                         			LD		P2, EA			; point P2 to it
+  151/  96 : C4 7F                      			LD		A, =0x7f    		; set end of program flag
+  152/  98 : CA 00                      			ST		A, 0, P2    	; at that position
+  153/  9A :                            
+  154/  9A :                            ; main interpreter loop
+  155/  9A : 85 D2                      MAINLP:		LD		EA, STACK		; reinitialize stack
+  156/  9C : 45                         			LD		SP, EA    
+  157/  9D : 85 C6                      			LD		EA, EXTRAM		; start of RAM		
+  158/  9F : B4 34 00                   			ADD		EA, =52			; offset to AESTK    
+  159/  A2 : 8D C8                      			ST		EA, AESTK		; set position of arithmetic stack
+  160/  A4 : 47                         			LD		P3, EA			; P3 is arith stack pointer
+  161/  A5 : 20 E4 09                   			JSR		INITBD			; initialize baud rate
+  162/  A8 : 18                         			CALL 	8				; CRLF
+  163/  A9 : C5 C2                      			LD		A, INPMOD		; mode flag?
+  164/  AB : 6C 0C                      			BZ 		MAINL2			; zero, skip
+  165/  AD :                            									; no, this is a break CTRL-C
+  166/  AD : 32                         			LD		EA, P2			; current pointion of buffer
+  167/  AE : 8D EE                      			ST		EA, CONTP		; save position (for CONT)
+  168/  B0 : 22 11 09                   			PLI		P2, =STOPMSG	; STOP message
+  169/  B3 : 1E                         			CALL	14				; PRTLN
+  170/  B4 : 5E                         			POP		P2				; restore P2
+  171/  B5 : 20 01 09                   			JSR		PRTAT			; print AT line#
+  172/  B8 : 18                         MAINL1:		CALL	8				; CRLF
+  173/  B9 : 85 C8                      MAINL2:		LD 		EA, AESTK		; initialize P3 with AESTK
+  174/  BB : 47                         			LD		P3, EA    
+  175/  BC : 84 00 00                   			LD		EA, =0			; initialize constant ZERO
+  176/  BF : 8D EA                      			ST		EA, ZERO		
+  177/  C1 : CD C2                      			ST		A, INPMOD   	; set cmd mode=0
+  178/  C3 : C4 01                      			LD		A, =1			; initialize constant ONE
+  179/  C5 : 8D E8                      			ST		EA, ONE			
+  180/  C7 : 20 4C 08                   			JSR		GETLN			; read a line into buffer
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 4 - 2024年05月21日 11時24分42秒
+
+
+  181/  CA : 19                         			CALL	9				; GETCHR
+  182/  CB : 1D                         			CALL 	13				; NUMBER
+  183/  CC : 85                         			DB		0x85  			; not a number, skip to DIRECT
+  184/  CD : 85 D4                      			LD		EA, TXTBGN		; start of program
+  185/  CF : BD E8                      			SUB		EA, ONE    		; minus 1
+  186/  D1 : BD D6                      			SUB		EA, TXTUNF		; subtract end of program
+  187/  D3 : 06                         			LD		A, S    		; get status
+  188/  D4 : 64 02                      			BP		MAINL3   			; overflow? no, skip
+  189/  D6 : 1F                         			CALL	15				; ERROR
+  190/  D7 : 01                         			DB 		1				; 1 (out of mem)
+  191/  D8 : 32                         MAINL3:		LD		EA, P2    		; get buffer pointer
+  192/  D9 : 8D F0                      			ST		EA, TMPF0		; save it
+  193/  DB : 20 6D 01                   			JSR		FINDLN			; find line in program
+  194/  DE : 7C 1B                      			BNZ		MAINL4			; no match, skip
+  195/  E0 : 56                         			PUSH	P2				; save p2 (line begin)
+  196/  E1 : 20 91 01                   			JSR		TOEOLN			; advance to end of line
+  197/  E4 : 81 00                      			LD		EA, 0, SP		; get line begin (P2)
+  198/  E6 : 47                         			LD		P3, EA			; into P3
+  199/  E7 : 32                         			LD		EA, P2			; get end of line from TOEOLN
+  200/  E8 : 1A                         			CALL	10    			; NEGATE
+  201/  E9 : 08                         			PUSH	EA				; save -endline
+  202/  EA : B5 E8                      			ADD		EA, ONE			; add one (for CR)
+  203/  EC : B5 D6                      			ADD		EA, TXTUNF		; add end of program area
+  204/  EE : 8D FE                      			ST		EA, TMPFE		; store number of bytes to move
+  205/  F0 : 3A                         			POP		EA				; restore -endline
+  206/  F1 : B1 00                      			ADD		EA, 0, SP		; subtract from start to get number of bytes to move
+  207/  F3 : B5 D6                      			ADD		EA, TXTUNF		; add end of program area
+  208/  F5 : 8D D6                      			ST		EA, TXTUNF		; set a new end of program
+  209/  F7 : 20 5C 01                   			JSR		BMOVE			; move area
+  210/  FA : 5E                         			POP		P2				; restore start of line
+  211/  FB :                            ; replace or add line
+  212/  FB : 32                         MAINL4:		LD		EA, P2			; copy into P3
+  213/  FC : 47                         			LD		P3, EA    
+  214/  FD : 85 F0                      			LD		EA, TMPF0		; buffer pointer
+  215/  FF : 46                         			LD		P2, EA			; into P2
+  216/ 100 : 19                         			CALL	9				; GETCHR
+  217/ 101 : E4 0D                      			XOR		A, =CR			; is it a single line number?
+  218/ 103 : 6C B4                      			BZ		MAINL2			; yes, ignore that
+  219/ 105 : 85 D0                      			LD		EA, BUFAD		; address of buffer
+  220/ 107 : 46                         			LD		P2, EA			; into P2
+  221/ 108 : 19                         			CALL	9				; GETCHR
+  222/ 109 : 32                         			LD		EA, P2			; save buffer pointer
+  223/ 10A : 8D F6                      			ST		EA, TMPF6
+  224/ 10C : 20 91 01                   			JSR		TOEOLN			; advance to end of line
+  225/ 10F : 32                         			LD		EA, P2			; get end of line
+  226/ 110 : BD F6                      			SUB		EA, TMPF6		; subtract to get length of buffer
+  227/ 112 : 8D FE                      			ST		EA, TMPFE		; store number of bytes to move
+  228/ 114 : B5 D6                      			ADD		EA, TXTUNF		; add temporary end of buffer
+  229/ 116 : BD D8                      			SUB		EA, TXTEND		; store as new end of program
+  230/ 118 : BD E8                      			SUB		EA, ONE			; subtract one
+  231/ 11A : 01                         			XCH		A, E			; is result negative?
+  232/ 11B : 64 3E                      			BP		OMERR			; out of memory error
+  233/ 11D : 57                         			PUSH	P3				; save P3
+  234/ 11E : 85 D6                      			LD		EA, TXTUNF		; get tmp area
+  235/ 120 : 46                         			LD		P2, EA			; into P2
+  236/ 121 : 33                         			LD		EA, P3			; line to insert
+  237/ 122 : BD D6                      			SUB		EA, TXTUNF		; subtract tmp buf
+  238/ 124 : 1A                         			CALL	10				; NEGATE
+  239/ 125 : 8D FB                      			ST		EA, TMPFB		; number of bytes to expand
+  240/ 127 : 58                         			OR		A, E			; is result zero?
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 5 - 2024年05月21日 11時24分42秒
+
+
+  241/ 128 : 0A                         			PUSH	A    			; save it for later check
+  242/ 129 : 85 D6                      			LD		EA, TXTUNF		; tmp buf
+  243/ 12B : B5 FE                      			ADD		EA, TMPFE		; add length of line
+  244/ 12D : 8D D6                      			ST		EA, TXTUNF		; store
+  245/ 12F : 47                         			LD		P3, EA			; into P3
+  246/ 130 : C2 00                      			LD		A, 0, P2		; copy a byte
+  247/ 132 : CB 00                      			ST		A, 0, P3
+  248/ 134 : 38                         			POP		A				; restore result from above (sets Z flag)
+  249/ 135 : 6C 10                      			BZ		MAINL6			; was zero, skip
+  250/ 137 : C6 FF                      MAINL5:		LD		A, @-1, P2		; otherwise copy backwards TMPFB bytes
+  251/ 139 : CF FF                      			ST		A, @-1, P3
+  252/ 13B : 9D FB                      			DLD		A, TMPFB		; decrement byte counter
+  253/ 13D : 7C F8                      			BNZ		MAINL5
+  254/ 13F : C5 FC                      			LD		A, TMPFB+1
+  255/ 141 : 6C 04                      			BZ		MAINL6			; exit loop if zero
+  256/ 143 : 9D FC                      			DLD		A, TMPFB+1
+  257/ 145 : 74 F0                      			BRA		MAINL5			; loop
+  258/ 147 : 5F                         MAINL6:		POP		P3				; restore target location
+  259/ 148 : 85 F6                      			LD		EA, TMPF6		
+  260/ 14A : 46                         			LD		P2, EA			; restore source location
+  261/ 14B : 20 5C 01                   			JSR		BMOVE			; move new line into program
+  262/ 14E : 24 B8 00                   MAINL7:		JMP		MAINL2			; done, continue in main loop
+  263/ 151 :                            
+  264/ 151 :                            ; parse a direct command
+  265/ 151 : C2 00                      DIRECT:		LD		A, 0, P2		; get char from buffer
+  266/ 153 : E4 0D                      			XOR		A, =CR			; is it a CR?
+  267/ 155 : 6C F7                      			BZ		MAINL7			; yes, continue in main loop
+  268/ 157 : 23 98 01                   			PLI		P3, =CMDTB1		; load first CMD table
+  269/ 15A : 1B                         			CALL	11				; CMPTOK
+  270/ 15B :                            
+  271/ 15B :                            ; out of memory error
+  272/ 15B : 1F                         OMERR:		CALL	15				; ERROR
+  273/ 15C : 01                         			DB		1				; 1 (out of memory)
+  274/ 15D :                            ;--------------------------------------------------------------------------------------------------
+  275/ 15D :                            
+  276/ 15D :                            ; move TMPFE bytes ascending from @P2 to @P3
+  277/ 15D : C6 01                      BMOVE:		LD		A, @1, P2		; get char from first pos
+  278/ 15F : CF 01                      			ST		A, @1, P3		; store into second
+  279/ 161 : 9D FE                      			DLD		A, TMPFE    	; decrement byte counter 16 bit
+  280/ 163 : 7C F8                      			BNZ		BMOVE
+  281/ 165 : C5 FF                      			LD		A, TMPFE+1
+  282/ 167 : 6C 04                      			BZ		BMOVE1   		; exit if zero
+  283/ 169 : 9D FF                      			DLD		A, TMPFE+1
+  284/ 16B : 74 F0                      			BRA		BMOVE			; loop
+  285/ 16D : 5C                         BMOVE1:		RET
+  286/ 16E :                            ;--------------------------------------------------------------------------------------------------
+  287/ 16E :                            ; find line in program, 0 = found, 1 = insert before, -1 = not found, line in P2
+  288/ 16E :                            ; line number to find is on AESTK
+  289/ 16E : 85 D4                      FINDLN:		LD 		EA, TXTBGN		; get start of program
+  290/ 170 : 46                         			LD 		P2, EA    		; into P2
+  291/ 171 : 32                         FINDL1:		LD		EA, P2			; get P2
+  292/ 172 : 8D FB                      			ST		EA, TMPFB		; save temporary
+  293/ 174 : 19                         			CALL	9				; GETCHR
+  294/ 175 : 1D                         			CALL	13				; NUMBER
+  295/ 176 : 18                         			DB 		0x18			; skip if not number to FINDL4
+  296/ 177 : 15                         			CALL 	5				; APULL
+  297/ 178 : BB FE                      			SUB 	EA, -2, P3		; subtract number from the one on stack (the line number found)
+  298/ 17A : 01                         			XCH		A, E			; is larger?
+  299/ 17B : 64 05                      			BP		FINDL2			; yes skip
+  300/ 17D : 20 91 01                   			JSR		TOEOLN			; advance to end of line
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 6 - 2024年05月21日 11時24分42秒
+
+
+  301/ 180 : 74 EF                      			BRA		FINDL1			; loop
+  302/ 182 : 58                         FINDL2:		OR		A, E
+  303/ 183 : 6C 02                      			BZ		FINDL3			; is exactly the same?
+  304/ 185 : C4 01                      			LD		A, =01			; no, return 1
+  305/ 187 : 0A                         FINDL3:		PUSH	A
+  306/ 188 : 15                         			CALL	5				; APULL
+  307/ 189 : 85 FB                      			LD		EA, TMPFB		; get start of this line
+  308/ 18B : 46                         			LD		P2, EA    		; into P2
+  309/ 18C : 38                         			POP		A				; restore result
+  310/ 18D : 5C                         			RET						; return with 0, if exact match, 1 if insert
+  311/ 18E : C4 FF                      FINDL4:		LD		A, =0xff		; return with -1: end of program
+  312/ 190 : 74 F5                      			BRA		FINDL3		
+  313/ 192 :                            
+  314/ 192 :                            ;--------------------------------------------------------------------------------------------------
+  315/ 192 :                            ; advance to end of line
+  316/ 192 : C4 0D                      TOEOLN:		LD		A, =CR			; search for end of line
+  317/ 194 : 2E                         			SSM 	P2				; should be within next 256 bytes
+  318/ 195 : 74 17                      			BRA		UCERR			; didn't find one, error 3
+  319/ 197 : 5C                         			RET						; found one, return with P2 pointing to char after CR
+  320/ 198 :                            
+  321/ 198 :                            ;--------------------------------------------------------------------------------------------------
+  322/ 198 :                            ; set of DIRECT commands
+  323/ 198 : 4C 49 53 54                CMDTB1:		DB 		'LIST'
+  324/ 19C : 93                         			DB 		0x93			; to LIST
+  325/ 19D : 4E 45 57                   			DB 		'NEW'
+  326/ 1A0 : 8A                         			DB 		0x8a			; to NEW2
+  327/ 1A1 : 52 55 4E                   			DB 		'RUN'
+  328/ 1A4 : B5                         			DB 		0xb5			; to RUN
+  329/ 1A5 : 43 4F 4E 54                			DB 		'CONT'
+  330/ 1A9 : A7                         			DB 		0xa7			; to CONT
+  331/ 1AA : D2                         			DB		0xd2			; default case to EXEC1
+  332/ 1AB :                            
+  333/ 1AB :                            ;--------------------------------------------------------------------------------------------------
+  334/ 1AB :                            ; NEW command
+  335/ 1AB : 24 82 00                   NEW2:		JMP		NEW				; do new command
+  336/ 1AE :                            
+  337/ 1AE :                            ;--------------------------------------------------------------------------------------------------
+  338/ 1AE : 1F                         UCERR:		CALL 	15				; ERROR
+  339/ 1AF : 03                         			DB 		3				; 3 (unexpected char)
+  340/ 1B0 :                            
+  341/ 1B0 :                            ;--------------------------------------------------------------------------------------------------
+  342/ 1B0 :                            ; LIST command
+  343/ 1B0 : 1D                         LIST:		CALL	13				; NUMBER
+  344/ 1B1 : 03                         			DB		3				; if no number, skip to LIST0
+  345/ 1B2 : 74 03                      			BRA		LIST1
+  346/ 1B4 : 85 EA                      LIST0:		LD		EA, ZERO		; no number given, start with line 0
+  347/ 1B6 : 14                         			CALL	4				; APUSH put on stack
+  348/ 1B7 : 20 6D 01                   LIST1:		JSR		FINDLN			; find line in program, or next one
+  349/ 1BA : 19                         LIST2:		CALL	9 		  		; GETCHR from location found
+  350/ 1BB : 56                         			PUSH	P2    
+  351/ 1BC : 1D                         			CALL	13				; NUMBER 
+  352/ 1BD : 0A                         			DB		0x0a			; if error, goto LIST3
+  353/ 1BE : 15                         			CALL	5				; APULL
+  354/ 1BF : 5E                         			POP		P2    
+  355/ 1C0 : 1E                         			CALL	14				; PRTLN
+  356/ 1C1 : 18                         			CALL	8				; CRLF
+  357/ 1C2 : 20 1D 09                   			JSR		CHKBRK			; test break
+  358/ 1C5 : 74 F3                      			BRA		LIST2
+  359/ 1C7 : 5E                         LIST3:		POP		P2
+  360/ 1C8 : 24 99 00                   MAIN1:		JMP		MAINLP
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 7 - 2024年05月21日 11時24分42秒
+
+
+  361/ 1CB :                            
+  362/ 1CB :                            ;--------------------------------------------------------------------------------------------------
+  363/ 1CB : 54 48 45 4E                CMDTB6:		DB		'THEN'			; then table
+  364/ 1CF : AD                         			DB		0xad			; to EXEC1
+  365/ 1D0 : AC                         			DB		0xac			; default case to EXEC1
+  366/ 1D1 :                            
+  367/ 1D1 :                            ;--------------------------------------------------------------------------------------------------
+  368/ 1D1 :                            ; CONT command
+  369/ 1D1 : 85 EE                      CONT:		LD		EA, CONTP		; restore program pointer from CONT
+  370/ 1D3 : 46                         			LD		P2, EA
+  371/ 1D4 : C4 01                      			LD		A, =01			; set program mode
+  372/ 1D6 : CD C2                      			ST		A, INPMOD
+  373/ 1D8 : 74 37                      			BRA		ENDCM1
+  374/ 1DA :                            
+  375/ 1DA :                            ;--------------------------------------------------------------------------------------------------
+  376/ 1DA :                            ; RUN command
+  377/ 1DA : 20 C0 05                   RUN:		JSR		INITAL			; initialize interpreter variables
+  378/ 1DD : C4 01                      			LD		A, =01			; set "running mode"
+  379/ 1DF : CD C2                      			ST		A, INPMOD
+  380/ 1E1 : 85 D4                      			LD		EA, TXTBGN		; start at first line
+  381/ 1E3 : 46                         			LD		P2, EA			; in buffer
+  382/ 1E4 : 74 04                      			BRA		RUN2			; skip
+  383/ 1E6 : C5 C2                      RUN1:		LD		A, INPMOD
+  384/ 1E8 : 6C DE                      			BZ		MAIN1
+  385/ 1EA : 85 EA                      RUN2:		LD		EA, ZERO		; load 0
+  386/ 1EC : 14                         			CALL	4				; APUSH
+  387/ 1ED :                            
+  388/ 1ED : 20 70 01                   RUN3:		JSR		FINDL1			; find line from current position
+  389/ 1F0 : 64 06                      			BP		RUN4			; found one
+  390/ 1F2 : C4 00                      			LD		A, =00			; set 'not running'
+  391/ 1F4 : CD C2                      			ST		A, INPMOD
+  392/ 1F6 : 74 D0                      			BRA		MAIN1			; back to mainloop
+  393/ 1F8 : 1D                         RUN4:		CALL	13				; parse line NUMBER
+  394/ 1F9 : 08                         			DB		 8				; not found: syntax error, goto SNERR1
+  395/ 1FA : 15                         			CALL	 5				; APULL line number
+  396/ 1FB : 8D C3                      			ST		EA, CURRNT		; set as current line
+  397/ 1FD :                            
+  398/ 1FD :                            
+  399/ 1FD : 23 2E 02                   EXEC1:		PLI		P3, =CMDTB2		; run loop
+  400/ 200 : 1B                         			CALL	11				; process commands
+  401/ 201 :                            
+  402/ 201 : 1F                         SNERR1:		CALL	15				; ERROR
+  403/ 202 : 04                         			DB 		4				; 4 (syntax error)
+  404/ 203 :                            
+  405/ 203 :                            ;--------------------------------------------------------------------------------------------------
+  406/ 203 :                            ; handle end of CMD, check for break or interrupts... (call 6)
+  407/ 203 : 3A                         ENDCMD:		POP		EA				; drop return address
+  408/ 204 : C5 E7                      			LD		A, 0xffe7		; flag set?
+  409/ 206 : 7C 09                      			BNZ		ENDCM1			; yes, skip
+  410/ 208 : C5 C2                      			LD		A, INPMOD		; interactive mode?
+  411/ 20A : 6C 05                      			BZ		ENDCM1			; yes skip
+  412/ 20C : 85 E0                      			LD		EA, INTVEC		; interrupt pending?
+  413/ 20E : 58                         			OR		A, E
+  414/ 20F : 7C 14                      			BNZ		ENDCM3			; yes, skip
+  415/ 211 :                            
+  416/ 211 : C4 00                      ENDCM1:		LD		A, =0			
+  417/ 213 : CD E7                      			ST		A, NOINT
+  418/ 215 : 20 1D 09                   			JSR		CHKBRK			; check for break
+  419/ 218 : 1C                         			CALL	12				; EXPECT
+  420/ 219 : 3A                         			DB		':'				; colon?
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 8 - 2024年05月21日 11時24分42秒
+
+
+  421/ 21A : 03                         			DB		0x03			; no, to ENDCM2
+  422/ 21B : 74 E0                      			BRA		EXEC1			; continue run loop
+  423/ 21D : C6 01                      ENDCM2:		LD		A, @1, P2		; advance to next char
+  424/ 21F : E4 0D                      			XOR		A, =CR			; is it end of line?
+  425/ 221 : 7C 8B                      			BNZ		UCERR			; error unexpected char
+  426/ 223 : 74 C1                      			BRA		RUN1			; continue
+  427/ 225 :                            
+  428/ 225 : 85 E0                      ENDCM3:		LD		EA, INTVEC		; get pending int vector
+  429/ 227 : 14                         			CALL	4				; APUSH
+  430/ 228 : 85 EA                      			LD		EA, ZERO		; 
+  431/ 22A : 8D E0                      			ST		EA, INTVEC		; clear pending int
+  432/ 22C : 74 49                      			BRA		GOSUB1			; jump into GOSUB (process interrupt)
+  433/ 22E :                            
+  434/ 22E : 4C 45 54                   CMDTB2:		DB		'LET'
+  435/ 231 : A6                         			DB 		0xa6			; to LET
+  436/ 232 : 49 46                      			DB		'IF'
+  437/ 234 : F3                         			DB		0xf3			; to IFCMD
+  438/ 235 : 4C 49 4E 4B                			DB		'LINK'
+  439/ 239 : F7                         			DB		0xf7			; to LINK
+  440/ 23A : 4E 45 58 54                			DB		'NEXT'
+  441/ 23E : 9C                         			DB		0x9c			; to NEXT
+  442/ 23F : 55 4E 54 49 4C             			DB		'UNTIL'
+  443/ 244 : DB                         			DB		0xdb			; to UNTIL
+  444/ 245 : 47 4F                      			DB		'GO'
+  445/ 247 : 96                         			DB		0x96			; to GOCMD
+  446/ 248 : 52 45 54 55 52 4E          			DB		'RETURN'
+  447/ 24E : BD                         			DB		0xbd			; to RETURN
+  448/ 24F : 52 45 4D                   			DB		'REM'
+  449/ 252 : CF                         			DB		0xcf			; to REMCMD
+  450/ 253 : 80                         			DB		0x80			; default case to EXEC2
+  451/ 254 :                            
+  452/ 254 : 23 BF 02                   EXEC2:		PLI		P3, =CMDTB7		; load table 7
+  453/ 257 : 1B                         			CALL	11    			; CMPTOK
+  454/ 258 :                            
+  455/ 258 :                            ;------------------------------------------------------------------------------
+  456/ 258 :                            ; forward to assignment
+  457/ 258 : 24 5A 04                   LET:		JMP		ASSIGN			; ignore LET and continue with general assigment
+  458/ 25B :                            
+  459/ 25B :                            ;------------------------------------------------------------------------------
+  460/ 25B :                            ; forward to NEXT cmd
+  461/ 25B : 24 68 03                   NEXT:		JMP		NEXT0			; handle NEXT
+  462/ 25E :                            
+  463/ 25E :                            ;------------------------------------------------------------------------------
+  464/ 25E :                            ; handle GOTO or GOSUB
+  465/ 25E : 23 62 02                   GOCMD:  	PLI		P3, =CMDTB5  	; check for TO or SUB
+  466/ 261 : 1B                         			CALL	11
+  467/ 262 :                            
+  468/ 262 : 54 4F                      CMDTB5:		DB		'TO'
+  469/ 264 : 85                         			DB		0x85			; to GOTO
+  470/ 265 : 53 55 42                   			DB		'SUB'
+  471/ 268 : 8D                         			DB		0x8d
+  472/ 269 : 80                         			DB		0x80			; default case to GOTO
+  473/ 26A :                            
+  474/ 26A :                            ;------------------------------------------------------------------------------
+  475/ 26A :                            ; GOTO command
+  476/ 26A : 10                         GOTO:		CALL	0				; RELEXP
+  477/ 26B : C4 01                      GOTO1:		LD		A, =1			;
+  478/ 26D : CD C2                      			ST		A, INPMOD		; set 'running mode'
+  479/ 26F : 20 6D 01                   			JSR		FINDLN			; find line in buffer
+  480/ 272 : 6C 84                      			BZ		RUN4			; skip to line number check
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 9 - 2024年05月21日 11時24分42秒
+
+
+  481/ 274 : 1F                         			CALL	15				; error    
+  482/ 275 : 07                         			DB		7				; 7 (goto target does not exist)    
+  483/ 276 :                            
+  484/ 276 :                            ;------------------------------------------------------------------------------
+  485/ 276 :                            ; GOSUB command
+  486/ 276 : 10                         GOSUB:		CALL	0				; RELEXP 
+  487/ 277 : 85 DE                      GOSUB1:		LD		EA, SBRPTR		; get SBR stack pointer
+  488/ 279 : 57                         			PUSH	P3				; save P3
+  489/ 27A : 47                         			LD		P3, EA			; SBR stack in P3
+  490/ 27B : 85 CC                      			LD		EA, DOSTK		; mark do stack pointer
+  491/ 27D : CD F6                      			ST		A, TMPF6		; in temporary
+  492/ 27F : 33                         			LD		EA, P3			; get SBR stack ptr
+  493/ 280 : 20 C0 03                   			JSR		CHKSBR			; check for overflow			
+  494/ 283 : 32                         			LD		EA, P2			; get buffer pointer
+  495/ 284 : 8F 02                      			ST		EA, @2, P3		; 
+  496/ 286 : 33                         			LD		EA, P3			; save new SBR pointer
+  497/ 287 : 8D DE                      			ST		EA, SBRPTR
+  498/ 289 : 5F                         			POP		P3				; restore P3
+  499/ 28A : 74 DF                      			BRA		GOTO1			; do GOTO
+  500/ 28C :                            
+  501/ 28C :                            ;------------------------------------------------------------------------------
+  502/ 28C :                            ; RETURN command
+  503/ 28C : 85 DE                      RETURN:		LD		EA, SBRPTR		; get SBR ptr
+  504/ 28E : BD CA                      			SUB		EA, SBRSTK		; is stack empty?
+  505/ 290 : 6C 0C                      			BZ		RETERR			; yes error 8
+  506/ 292 : 85 DE                      			LD		EA, SBRPTR		; decrement SBR ptr
+  507/ 294 : BC 02 00                   			SUB		EA, =2
+  508/ 297 : 8D DE                      			ST		EA, SBRPTR		; store it back
+  509/ 299 : 46                         			LD		P2, EA			; into P2
+  510/ 29A : 82 00                      			LD		EA, 0, P2		; restore buffer pointer
+  511/ 29C : 46                         			LD		P2, EA
+  512/ 29D : 16                         			CALL	6				; ENDCMD
+  513/ 29E :                            
+  514/ 29E :                            ;------------------------------------------------------------------------------
+  515/ 29E : 1F                         RETERR:		CALL	15				; ERROR
+  516/ 29F : 08                         			DB		8				; 8 (return without gosub)
+  517/ 2A0 :                            
+  518/ 2A0 :                            ;------------------------------------------------------------------------------
+  519/ 2A0 :                            ; forward to UNTIL
+  520/ 2A0 : 74 5F                      UNTIL:		BRA		UNTIL0			; redirect to real code
+  521/ 2A2 :                            
+  522/ 2A2 :                            ;------------------------------------------------------------------------------
+  523/ 2A2 :                            ; REM
+  524/ 2A2 : 20 91 01                   REMCMD:		JSR		TOEOLN			; advance to end of line
+  525/ 2A5 : C6 FF                      			LD		A, @-1, P2	; back one char
+  526/ 2A7 : 16                         			CALL	6				; ENDCMD
+  527/ 2A8 :                            
+  528/ 2A8 :                            ;------------------------------------------------------------------------------
+  529/ 2A8 :                            ; IF
+  530/ 2A8 : 10                         IFCMD:		CALL	0				; RELEXP get condition
+  531/ 2A9 : 15                         			CALL	5				; APULL pop it into EA
+  532/ 2AA : 58                         			OR		A, E			; check for zero
+  533/ 2AB : 6C F5                      			BZ		REMCMD			; false: advance to end of line
+  534/ 2AD : 23 CB 01                   			PLI		P3, =CMDTB6		; process THEN (may be missing)
+  535/ 2B0 : 1B                         			CALL	11				; CMPTOK
+  536/ 2B1 :                            
+  537/ 2B1 :                            ;------------------------------------------------------------------------------
+  538/ 2B1 :                            ; LINK
+  539/ 2B1 : 10                         LINK:		CALL	0				; RELEXP get link address
+  540/ 2B2 : 22 C2 04                   			PLI		P2, =DOLAL6-1	; save P2, put return vector into P2
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 10 - 2024年05月21日 11時24分42秒
+
+
+  541/ 2B5 : 15                         			CALL	5				; APULL pop link address
+  542/ 2B6 : 57                         			PUSH	P3				; push P3 on stack
+  543/ 2B7 : 56                         			PUSH	P2				; put return vector on stack
+  544/ 2B8 : BD E8                      			SUB		EA, ONE			; adjust link address
+  545/ 2BA : 08                         			PUSH	EA				; push on stack
+  546/ 2BB : 85 C6                      			LD		EA, EXTRAM		; load P2 with base of variables
+  547/ 2BD : 46                         			LD		P2, EA
+  548/ 2BE : 5C                         			RET						; return to link address
+  549/ 2BF :                            ; note: the stack frame is (before RET):
+  550/ 2BF :                            ;		P2 = variables
+  551/ 2BF :                            ;		Top:	linkaddress-1	(pulled by RET here)
+  552/ 2BF :                            ;				returnvector-1	(pulled by RET in called program)
+  553/ 2BF :                            ;				saved P3		(restored in returnvector stub)
+  554/ 2BF :                            ;				saved P2		(restored in returnvector stub)
+  555/ 2BF :                            
+  556/ 2BF :                            ;------------------------------------------------------------------------------
+  557/ 2BF : 46 4F 52                   CMDTB7:		DB		'FOR'
+  558/ 2C2 : E4                         			DB		0xe4			; to FOR
+  559/ 2C3 : 44 4F                      			DB		'DO'
+  560/ 2C5 : A7                         			DB		0xa7			; to DO
+  561/ 2C6 : 4F 4E                      			DB		'ON'
+  562/ 2C8 : 8F                         			DB		0x8f			; to ON
+  563/ 2C9 : 43 4C 45 41 52             			DB		'CLEAR'
+  564/ 2CE : 85                         			DB		0x85			; to CLEAR
+  565/ 2CF : 80                         			DB		0x80			; to EXEC3
+  566/ 2D0 :                            
+  567/ 2D0 :                            ;------------------------------------------------------------------------------
+  568/ 2D0 :                            ; handle several commands for direct/program mode
+  569/ 2D0 : 23 23 04                   EXEC3:		PLI		P3, =CMDTB8
+  570/ 2D3 : 1B                         			CALL	11				; CMPTOK
+  571/ 2D4 :                            
+  572/ 2D4 :                            ;------------------------------------------------------------------------------
+  573/ 2D4 :                            ; CLEAR cmd
+  574/ 2D4 : 20 C5 05                   CLEAR:		JSR		INITA1			; do warm initialization
+  575/ 2D7 : 16                         			CALL	6				; ENDCMD
+  576/ 2D8 :                            
+  577/ 2D8 :                            ;------------------------------------------------------------------------------
+  578/ 2D8 :                            ; ON cmd
+  579/ 2D8 : 10                         ON:			CALL	0				; RELEXP get expression
+  580/ 2D9 : 1C                         			CALL	12				; EXPECT check if comma follows
+  581/ 2DA : 2C                         			DB		','    
+  582/ 2DB : 01                         			DB		1				; if not, continue next instruction
+  583/ 2DC : 15                         ON1:		CALL	5				; APULL get expression
+  584/ 2DD : D4 01                      			AND		A, =1			; has it bit 0 set?
+  585/ 2DF : 6C 07                      			BZ		ON2				; no, skip
+  586/ 2E1 : CD E6                      			ST		A, BRKFLG		; store nonzero in BRKFLG
+  587/ 2E3 : 10                         			CALL	0				; RELEXP get INTA vector expression
+  588/ 2E4 : 15                         			CALL	5				; APULL into EA
+  589/ 2E5 : 8D E2                      			ST		EA, INTAVC		; set as INTA call vector
+  590/ 2E7 : 16                         			CALL	6				; ENDCMD done
+  591/ 2E8 :                            
+  592/ 2E8 :                            ; assume here another bit set
+  593/ 2E8 : 10                         ON2:		CALL	0				; RELEXP get INTB vector expression
+  594/ 2E9 : 15                         			CALL	5				; APULL into EA
+  595/ 2EA : 8D E4                      			ST		EA, INTBVC		; set as INTB call vector
+  596/ 2EC : 16                         			CALL	6				; ENDCMD done
+  597/ 2ED :                            
+  598/ 2ED :                            ;------------------------------------------------------------------------------
+  599/ 2ED :                            ; DO cmd
+  600/ 2ED : 85 DA                      DO:			LD		EA, DOPTR		; get DO stack ptr
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 11 - 2024年05月21日 11時24分42秒
+
+
+  601/ 2EF : 57                         			PUSH	P3				; 	save P3
+  602/ 2F0 : 47                         			LD		P3, EA			; into P3
+  603/ 2F1 : 85 CE                      			LD		EA, FORSTK		; put end of stack (FORSTK is adjacent)
+  604/ 2F3 : CD F6                      			ST		A, TMPF6		; into temporary
+  605/ 2F5 : 33                         			LD		EA, P3			; DO stack pointer
+  606/ 2F6 : 20 C0 03                   			JSR		CHKSBR			; check stack overflow
+  607/ 2F9 : 32                         			LD		EA, P2			; get current program pointer
+  608/ 2FA : 8F 02                      			ST		EA, @02, P3		; push on DO stack
+  609/ 2FC : 33                         			LD		EA, P3    		; and save new DO stack ptr
+  610/ 2FD : 5F                         			POP		P3				;   restore P3
+  611/ 2FE : 8D DA                      DO1:		ST		EA, DOPTR
+  612/ 300 : 16                         			CALL	6				; ENDCMD done
+  613/ 301 :                            ;;			RET						; done
+  614/ 301 :                            
+  615/ 301 :                            ;------------------------------------------------------------------------------
+  616/ 301 :                            	;UNTIL command
+  617/ 301 : 10                         UNTIL0:		CALL	0				; RELEXP get condition
+  618/ 302 : 85 DA                      			LD		EA, DOPTR		; get DO stack ptr
+  619/ 304 : BD CC                      			SUB		EA, DOSTK		; subtrack stack base
+  620/ 306 : 58                         			OR		A,E				; is empty?
+  621/ 307 : 7C 02                      			BNZ		UNTIL1			; no, continue
+  622/ 309 :                            									; otherwise throw error 11
+  623/ 309 : 1F                         			CALL	15				; ERROR
+  624/ 30A : 0B                         			DB		0x0b			; 11 (UNTIL without DO)
+  625/ 30B : 15                         UNTIL1:		CALL	5				; APULL condition into EA
+  626/ 30C : 58                         			OR		A,E				; is false?
+  627/ 30D : 6C 07                      			BZ		UNTIL2			; yes, skip
+  628/ 30F : 85 DA                      			LD		EA, DOPTR		; no, discard DO loop from stack
+  629/ 311 : BC 02 00                   			SUB		EA, =0002		; 1 level
+  630/ 314 : 74 E8                      			BRA		DO1				; store back DO stack ptr and exit
+  631/ 316 : 85 DA                      UNTIL2:		LD		EA, DOPTR		; do loop again
+  632/ 318 : 46                         			LD		P2, EA			; get DO stack ptr
+  633/ 319 : 82 FE                      			LD		EA, -2, P2		; get last level stored
+  634/ 31B : 46                         			LD		P2, EA			; as new program pointer -> redo loop
+  635/ 31C : 16                         			CALL	6				; ENDCMD
+  636/ 31D :                            ;;			RET						; done	
+  637/ 31D :                            
+  638/ 31D :                            ;------------------------------------------------------------------------------
+  639/ 31D :                            ; for comparison of FOR keyword STEP
+  640/ 31D : 53 54 45 50                CMDTB9:		DB		'STEP'
+  641/ 321 : 96                         			DB		0x96			; to FOR2
+  642/ 322 : 98                         			DB		0x98			; to FOR3
+  643/ 323 :                            
+  644/ 323 :                            ; for comparison of FOR keyword TO
+  645/ 323 : 54 4F                      CMDT10:		DB		'TO'
+  646/ 325 : 8D                         			DB		0x8d			; to FOR1
+  647/ 326 : FD                         			DB		0xfd			; to SNERR2 (syntax error)
+  648/ 327 :                            
+  649/ 327 : 20 6C 05                   FOR:		JSR		GETVAR			; get a variable address on stack
+  650/ 32A : 7A                         			DB		0x7a			; none found: goto SNERR2 (syntax error)
+  651/ 32B : 1C                         			CALL	12				; EXPECT a '='
+  652/ 32C : 3D                         			DB		'='
+  653/ 32D : 77                         			DB		0x77			; none found: goto SNERR2 (syntax error)
+  654/ 32E : 10                         			CALL	0				; RELEXP get initial expression
+  655/ 32F : 23 23 03                   			PLI		P3, =CMDT10		; expect TO keyword (SNERR if not)
+  656/ 332 : 1B                         			CALL	11				; CMPTOK
+  657/ 333 :                            
+  658/ 333 : 10                         FOR1:		CALL	0				; RELEXP get end expression
+  659/ 334 : 23 1D 03                   			PLI		P3, =CMDTB9		; check for STEP keyword, to FOR2 if found, to FOR3 if not
+  660/ 337 : 1B                         			CALL	11				; CMPTOK
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 12 - 2024年05月21日 11時24分42秒
+
+
+  661/ 338 :                            
+  662/ 338 : 10                         FOR2:		CALL	0				; RELEXP get step expression
+  663/ 339 : 74 04                      			BRA		FOR4			; skip
+  664/ 33B : 85 E8                      FOR3:   	LD		EA, ONE			; push 1 as STEP on stack
+  665/ 33D : 8F 02                      			ST		EA, @2, P3
+  666/ 33F : 85 DC                      FOR4:		LD		EA, FORPTR		; get the FOR stack ptr
+  667/ 341 : 56                         			PUSH	P2				;   save current program ptr
+  668/ 342 : 46                         			LD		P2, EA			; into P2
+  669/ 343 : 85 D0                      			LD		EA, BUFAD		; put end of stack (BUFAD is adjacent)
+  670/ 345 : CD F6                      			ST		A, TMPF6		; into temporary
+  671/ 347 : 32                         			LD		EA, P2			; FOR stack ptr
+  672/ 348 : 20 C0 03                   			JSR		CHKSBR			; check stack overflow
+  673/ 34B : 15                         			CALL	5				; APULL restore step value
+  674/ 34C : 8E 02                      			ST		EA, @2, P2		; save at forstack+0
+  675/ 34E : 15                         			CALL	5				; APULL restore end value
+  676/ 34F : 8E 02                      			ST		EA, @2, P2		; save at forstack+2
+  677/ 351 : 15                         			CALL	5				; APULL restore initial value
+  678/ 352 : 09                         			LD		T, EA			; save in T
+  679/ 353 : 15                         			CALL	5				; APULL restore variable address
+  680/ 354 : 8D F6                      			ST		EA, TMPF6		; store address in temporary
+  681/ 356 : CE 01                      			ST		A, @1, P2		; save low offset of var at forstack+4
+  682/ 358 : 81 00                      			LD		EA, 0, SP		; get current program ptr
+  683/ 35A : 8E 02                      			ST		EA, @2, P2		; save at forstack+5
+  684/ 35C : 32                         			LD		EA, P2			; save new FOR stack ptr
+  685/ 35D : 8D DC                      			ST		EA, FORPTR
+  686/ 35F : 85 F6                      			LD		EA, TMPF6		; get variable address
+  687/ 361 : 46                         			LD		P2, EA			; into P2
+  688/ 362 : 0B                         			LD		EA, T			; initial value
+  689/ 363 : 8A 00                      			ST		EA, 0, P2		; save in variable
+  690/ 365 : 5E                         FOR5:		POP		P2				; restore program pointer
+  691/ 366 : 16                         			CALL	6				; ENDCMD
+  692/ 367 :                            ; note the FOR stack frame looks like the following:
+  693/ 367 :                            ;		offset 0: DW step value
+  694/ 367 :                            ;		offset 2: DW end value
+  695/ 367 :                            ;		offset 4: DB variable low offset
+  696/ 367 :                            ;		offset 5: DW program pointer of first statement of loop
+  697/ 367 :                            
+  698/ 367 : 1F                         NXERR:		CALL	15				; ERROR
+  699/ 368 : 0A                         			DB		10				; 10 (NEXT without FOR)
+  700/ 369 :                            
+  701/ 369 :                            ; NEXT command
+  702/ 369 : 20 6C 05                   NEXT0:		JSR		GETVAR			; get variable address on stack
+  703/ 36C : 38                         			DB		0x38			; no var found, goto SNERR2 (syntax error)
+  704/ 36D : 15                         			CALL	5				; APULL restore address
+  705/ 36E : 09                         			LD		T, EA			; put into T
+  706/ 36F : 85 DC                      NEXT1:		LD		EA, FORPTR		; get FOR stack ptr
+  707/ 371 : BD CE                      			SUB		EA, FORSTK		; subtract base
+  708/ 373 : 6C F2                      			BZ		NXERR			; is empty? yes, NEXT without FOR error
+  709/ 375 : 85 DC                      			LD		EA, FORPTR		; get FOR stack ptr again
+  710/ 377 : BC 07 00                   			SUB		EA, =0007		; discard current frame
+  711/ 37A : 8D DC                      			ST		EA, FORPTR		; save it for the case loop ends
+  712/ 37C : 56                         			PUSH	P2				; save program pointer
+  713/ 37D : 46                         			LD		P2, EA			; point to base of current FOR frame
+  714/ 37E : 0B                         			LD		EA, T			; get var address
+  715/ 37F : FA 04                      			SUB		A, 4, P2		; subtract var addr of this frame
+  716/ 381 : 6C 03                      			BZ		NEXT2			; is the same?, yes skip (found)
+  717/ 383 : 5E                         			POP		P2				; restore P2
+  718/ 384 : 74 E9                      			BRA		NEXT1			; try another loop - assume jump out of loop
+  719/ 386 : C2 01                      NEXT2:		LD		A, 1, P2		; step value (high byte)
+  720/ 388 : 64 09                      			BP		NEXT3			; is step positive? yes, skip
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 13 - 2024年05月21日 11時24分42秒
+
+
+  721/ 38A : 20 A5 03                   			JSR		NXADD			; add step and compare with end value
+  722/ 38D : E4 FF                      			XOR		A, =0xff		; compare with -1
+  723/ 38F : 6C 07                      			BZ		NEXT5			; zero? yes, end of loop not yet reached
+  724/ 391 : 74 03                      			BRA		NEXT4			; skip
+  725/ 393 : 20 A5 03                   NEXT3:		JSR		NXADD			; add step and compare with end value
+  726/ 396 : 64 CD                      NEXT4:		BP		FOR5			; end of loop done, continue after NEXT
+  727/ 398 : 82 05                      NEXT5: 		LD		EA, 5, P2		; get start of loop program pointer
+  728/ 39A : 5E                         			POP		P2				; drop P2
+  729/ 39B : 46                         			LD		P2, EA			; set start of loop again
+  730/ 39C : 85 DC                      			LD		EA, FORPTR		; get FOR stack ptr
+  731/ 39E : B4 07 00                   			ADD		EA, =0007		; push loop frame again
+  732/ 3A1 : 8D DC                      			ST		EA, FORPTR		; save new FOR ptr
+  733/ 3A3 : 16                         			CALL	6				; ENDCMD
+  734/ 3A4 :                            ;;			RET						; done
+  735/ 3A4 :                            
+  736/ 3A4 : 1F                         SNERR2:		CALL	15				; ERROR
+  737/ 3A5 : 04                         			DB		4				; 4 (syntax error)
+  738/ 3A6 :                            
+  739/ 3A6 :                            ;------------------------------------------------------------------------------
+  740/ 3A6 :                            ; add step and compare with end value
+  741/ 3A6 : 85 C6                      NXADD:		LD		EA, EXTRAM		; variable base
+  742/ 3A8 : C2 04                      			LD		A, 4, P2    	; get variable offset
+  743/ 3AA : 57                         			PUSH	P3				;   save P3
+  744/ 3AB : 47                         			LD		P3, EA			; into EA
+  745/ 3AC : 83 00                      			LD		EA, 0, P3		; get variable value
+  746/ 3AE : B2 00                      			ADD		EA, 0, P2		; add step value
+  747/ 3B0 : 8B 00                      			ST		EA, 0, P3		; store new variable
+  748/ 3B2 : 5F                         			POP		P3				;  restore P3
+  749/ 3B3 : BA 02                      			SUB		EA, 2, P2		; compare with end value
+  750/ 3B5 : 6C 04                      			BZ		NXADD2			; same?
+  751/ 3B7 : 01                         			XCH		A, E			; no, swap: A = high byte
+  752/ 3B8 : D4 80                      NXADD1:		AND		A, =0x80		; mask out sign bit
+  753/ 3BA : 5C                         			RET						; return
+  754/ 3BB : 01                         NXADD2:		XCH		A, E			; swap: A = high byte
+  755/ 3BC : 7C FA                      			BNZ		NXADD1			; not same? get high byte
+  756/ 3BE : C4 FF                      			LD		A, =0xff		; set A = -1
+  757/ 3C0 : 5C                         			RET						; return
+  758/ 3C1 :                            
+  759/ 3C1 :                            ;------------------------------------------------------------------------------	
+  760/ 3C1 :                            ; check for SBR stack overflow
+  761/ 3C1 :                            ; EA contains current stack pointer, TMPF6 contains limit
+  762/ 3C1 : FD F6                      CHKSBR:		SUB		A, TMPF6		; subrack limit
+  763/ 3C3 : 64 01                      			BP		NSERR			; beyond limit?
+  764/ 3C5 : 5C                         			RET						; no, exit
+  765/ 3C6 :                            									; otherwise nesting too deep error
+  766/ 3C6 : 1F                         NSERR:		CALL	15				; ERROR
+  767/ 3C7 : 09                         			DB		9				; 9 (nesting too deep)
+  768/ 3C8 :                            
+  769/ 3C8 :                            ;------------------------------------------------------------------------------
+  770/ 3C8 : 1F                         SUERR:		CALL	15				; ERROR
+  771/ 3C9 : 02                         			DB		2				; 2 (stmt used improperly)
+  772/ 3CA :                            
+  773/ 3CA :                            ;------------------------------------------------------------------------------
+  774/ 3CA :                            ; INPUT handler
+  775/ 3CA : C5 C2                      INPUT0:		LD		A, INPMOD		; is in direct mode?
+  776/ 3CC : 6C FA                      			BZ		SUERR			; yes, this is an error!
+  777/ 3CE : 32                         			LD		EA, P2			; save current program ptr temporarily
+  778/ 3CF : 8D F2                      			ST		EA, TMPF2
+  779/ 3D1 : 20 6C 05                   INPUT1:		JSR		GETVAR			; get variable address on stack
+  780/ 3D4 : 29                         			DB		0x29			; no variable, goto INPUT3 (could be $)
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 14 - 2024年05月21日 11時24分42秒
+
+
+  781/ 3D5 : C4 03                      			LD		A, =03			; set mode 3, swap buffers (P2 is input buffer)
+  782/ 3D7 : 20 1A 04                   			JSR		SWPBUF
+  783/ 3DA : 20 4C 08                   			JSR		GETLN			; get line into input buffer
+  784/ 3DD : 10                         INPUT2:		CALL	0				; RELEXP get expression from input buffer
+  785/ 3DE : 15                         			CALL	5				; APULL into EA
+  786/ 3DF : 09                         			LD		T, EA			; save into T
+  787/ 3E0 : 15                         			CALL	5				; APULL get variable address
+  788/ 3E1 : 57                         			PUSH	P3				;   save P3
+  789/ 3E2 : 47                         			LD		P3, EA			; into P3
+  790/ 3E3 : 0B                         			LD		EA, T			; obtain expression
+  791/ 3E4 : 8B 00                      			ST		EA, 0, P3		; save into variable
+  792/ 3E6 : 5F                         			POP		P3				;   restore P3
+  793/ 3E7 : C4 01                      			LD		A, =01			; set mode 1, swap buffers (P2 is program ptr)
+  794/ 3E9 : 20 1A 04                   			JSR		SWPBUF
+  795/ 3EC : 1C                         			CALL	12				; EXPECT a comma
+  796/ 3ED : 2C                         			DB		','
+  797/ 3EE : 2C                         			DB		0x2c			; if not found, exit via INPUT5
+  798/ 3EF : 20 6C 05                   			JSR		GETVAR			; get another variable
+  799/ 3F2 : D6                         			DB		0xd6			; if none found, goto SUERR (error 2)
+  800/ 3F3 :                            									; does not accept $ any more here
+  801/ 3F3 : C4 03                      			LD		A, =03			; set mode 3, swap buffers (P2 is input buffer)
+  802/ 3F5 : 20 1A 04                   			JSR		SWPBUF
+  803/ 3F8 : 1C                         			CALL	12				; EXPECT an optional comma in input buffer
+  804/ 3F9 : 2C                         			DB		','
+  805/ 3FA : 01                         			DB		1				; none found, ignore
+  806/ 3FB : 74 E0                      			BRA		INPUT2			; process the next variable
+  807/ 3FD :                            
+  808/ 3FD :                            ; process $expr for string input
+  809/ 3FD : 1C                         INPUT3:		CALL	12				; EXPECT a $ here
+  810/ 3FE : 24                         			DB		'$'
+  811/ 3FF : C9                         			DB		0xc9			; none found, goto SUERR
+  812/ 400 : 11                         			CALL	1				; FACTOR get string buffer address
+  813/ 401 : C4 03                      			LD		A, =03			; set mode 3, swap buffers (P2 is input buffer)
+  814/ 403 : 20 1A 04                   			JSR		SWPBUF
+  815/ 406 : 20 4C 08                   			JSR		GETLN			; get line of input
+  816/ 409 : 15                         			CALL	5				; APULL get buffer address
+  817/ 40A : 57                         			PUSH	P3				;   save P3
+  818/ 40B : 47                         			LD		P3, EA			; into P3
+  819/ 40C : C6 01                      INPUT4:		LD		A, @1, P2		; copy input from buffer into string
+  820/ 40E : CF 01                      			ST		A, @1, P3
+  821/ 410 : E4 0D                      			XOR		A, =CR			; until CR seen
+  822/ 412 : 7C F8                      			BNZ		INPUT4
+  823/ 414 : 5F                         			POP		P3				;   restore P3
+  824/ 415 : C4 01                      			LD		A, =01			; set mode 1 again, swap buffers (P2 is program ptr)
+  825/ 417 : 20 1A 04                   			JSR		SWPBUF			
+  826/ 41A : 16                         INPUT5:		CALL	6				; ENDCMD done
+  827/ 41B :                            
+  828/ 41B :                            ;------------------------------------------------------------------------------
+  829/ 41B :                            ; save input mode and swap buffers
+  830/ 41B : CD C2                      SWPBUF:		ST		A, INPMOD		; store new input mode
+  831/ 41D : 85 F0                      			LD		EA, TMPF0		; swap buffer addresses
+  832/ 41F : 4E                         			XCH		P2, EA			; TMPF0 normally contains input buffer address
+  833/ 420 : 8D F0                      			ST		EA, TMPF0
+  834/ 422 : 5C                         			RET
+  835/ 423 :                            
+  836/ 423 :                            ;------------------------------------------------------------------------------
+  837/ 423 :                            ; several more commands
+  838/ 423 : 44 45 4C 41 59             CMDTB8:		DB		'DELAY'
+  839/ 428 : 9A                         			DB		0x9a			; to DELAY
+  840/ 429 : 49 4E 50 55 54             			DB		'INPUT'
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 15 - 2024年05月21日 11時24分42秒
+
+
+  841/ 42E : 8F                         			DB		0x8f			; to INPUT
+  842/ 42F : 50 52 49 4E 54             			DB		'PRINT'
+  843/ 434 : 8B                         			DB		0x8b			; to PRINT
+  844/ 435 : 50 52                      			DB		'PR'
+  845/ 437 : 88                         			DB		0x88			; to PRINT
+  846/ 438 : 53 54 4F 50                			DB		'STOP'
+  847/ 43C : 91                         			DB		0x91			; to STOP
+  848/ 43D : 9D                         			DB		0x9d			; default to ASSIGN
+  849/ 43E :                            
+  850/ 43E :                            ;------------------------------------------------------------------------------
+  851/ 43E :                            ; INPUT cmd
+  852/ 43E : 74 8A                      INPUT:		BRA		INPUT0			; INPUT handler
+  853/ 440 :                            
+  854/ 440 :                            ;------------------------------------------------------------------------------
+  855/ 440 :                            ; PRINT cmd
+  856/ 440 : 24 C9 04                   PRINT:		JMP		PRINT0			; PRINT handler
+  857/ 443 :                            
+  858/ 443 :                            ;------------------------------------------------------------------------------
+  859/ 443 :                            ; DELAY cmd
+  860/ 443 : 10                         DELAY:		CALL	0				; RELEXP get delay expression
+  861/ 444 : 15                         			CALL	5				; APULL into EA
+  862/ 445 : A4 3F 00                   			LD		T, =0x003f		; multiply with 63
+  863/ 448 : 2C                         			MPY		EA, T
+  864/ 449 : 0B                         			LD		EA, T			; into EA
+  865/ 44A : 20 CA 09                   			JSR		DELAYC			; do delay
+  866/ 44D : 16                         			CALL	6				; ENDCMD
+  867/ 44E :                            ;;;			RET						; done
+  868/ 44E :                            
+  869/ 44E :                            ;------------------------------------------------------------------------------
+  870/ 44E :                            ; STOP cmd
+  871/ 44E : 24 99 00                   STOP:		JMP		MAINLP			; directly enter main loop
+  872/ 451 :                            
+  873/ 451 :                            ;------------------------------------------------------------------------------
+  874/ 451 :                            ; left hand side (LHS) operators for assigment
+  875/ 451 : 53 54 41 54                CMDTB4:		DB		'STAT'
+  876/ 455 : 89                         			DB		0x89			; to STATLH
+  877/ 456 : 40                         			DB		'@'
+  878/ 457 : 92                         			DB		0x92			; to ATLH
+  879/ 458 : 24                         			DB		'$'
+  880/ 459 : B1                         			DB		0xb1			; to DOLALH
+  881/ 45A : 9E                         			DB		0x9e			; default case to ASSIG1   
+  882/ 45B :                            
+  883/ 45B :                            ;------------------------------------------------------------------------------
+  884/ 45B :                            ; handle assignments
+  885/ 45B : 23 51 04                   ASSIGN:		PLI		P3, =CMDTB4
+  886/ 45E : 1B                         			CALL	11				; CMPTOK
+  887/ 45F :                            
+  888/ 45F :                            ;------------------------------------------------------------------------------
+  889/ 45F :                            ; STAT on left hand side
+  890/ 45F : 1C                         STATLH:		CALL	12 				; EXPECT an equal symbol
+  891/ 460 : 3D                         			DB		'='				;  
+  892/ 461 : 67                         			DB		0x67			; not found, goto SNERR    
+  893/ 462 : 10                         			CALL	0				; RELEXP get the right hand side
+  894/ 463 : 15                         			CALL	5				; APULL into EA
+  895/ 464 : 07                         			LD		S, A			; put into SR (only low byte)  
+  896/ 465 : C4 01                      			LD		A, =1			; suppress potential INT that could
+  897/ 467 : CD E7                      			ST		A, NOINT		; result from changing SA/SB
+  898/ 469 : 16                         			CALL	6				; ENDCMD
+  899/ 46A :                            
+  900/ 46A :                            ;------------------------------------------------------------------------------
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 16 - 2024年05月21日 11時24分42秒
+
+
+  901/ 46A :                            ; @ on left hand side (POKE)
+  902/ 46A : 11                         ATLH:		CALL	1				; FACTOR get non-boolean expression
+  903/ 46B : 1C                         			CALL	12				; EXPECT an equal symbol
+  904/ 46C : 3D                         			DB		'='
+  905/ 46D : 5B                         			DB		0x5b			; not found, goto SNERR (syntax error)
+  906/ 46E : 10                         			CALL	0				; RELEXP get right hand side
+  907/ 46F : 15                         			CALL	5				; APULL into EA
+  908/ 470 : 09                         			LD		T, EA			; into T
+  909/ 471 : 15                         			CALL	5				; APULL get target address
+  910/ 472 : 57                         			PUSH	P3				;   save P3
+  911/ 473 : 47                         			LD		P3, EA			; into P3
+  912/ 474 : 0B                         			LD		EA, T			; RHS into EA
+  913/ 475 : CB 00                      			ST		A, 0, P3		; store low byte at address
+  914/ 477 : 5F                         			POP		P3
+  915/ 478 : 16                         			CALL	6				; ENDCMD
+  916/ 479 :                            ;;;			RET
+  917/ 479 :                            
+  918/ 479 :                            ;------------------------------------------------------------------------------
+  919/ 479 :                            ; default case for assign (VAR = expr)
+  920/ 479 : 20 6C 05                   ASSIG1:		JSR		GETVAR			; get a variable
+  921/ 47C : 4C                         			DB		0x4c			; if not var, goto DOLAL4 (assume $xxxx)
+  922/ 47D : 1C                         			CALL	12				; EXPECT an equal symbol
+  923/ 47E : 3D                         			DB		'='
+  924/ 47F : 49                         			DB		0x49			; not found, go to SNERR
+  925/ 480 : 10                         			CALL	0				; RELEXP get right hand side
+  926/ 481 : 15                         			CALL	5				; APULL into EA
+  927/ 482 : 09                         			LD		T, EA			; into T
+  928/ 483 : 15                         			CALL	5				; APULL get variable address
+  929/ 484 : 57                         			PUSH	P3				;   save P3
+  930/ 485 : 47                         			LD		P3, EA			; into P3
+  931/ 486 : 0B                         			LD		EA, T			; get RHS
+  932/ 487 : 8B 00                      			ST		EA, 0, P3		; store result into variable
+  933/ 489 : 5F                         			POP		P3				;   restore P3
+  934/ 48A : 16                         			CALL	6				; ENDCMD done
+  935/ 48B :                            
+  936/ 48B :                            ;------------------------------------------------------------------------------
+  937/ 48B :                            ; $ on left hand side
+  938/ 48B : 11                         DOLALH:		CALL	1				; FACTOR get target address
+  939/ 48C : 1C                         			CALL	12				; EXPECT an equal symbol
+  940/ 48D : 3D                         			DB		'='
+  941/ 48E : 3A                         			DB		0x3a			; if not found, goto SNERR
+  942/ 48F : C2 00                      			LD		A, 0, P2		; get next char from program
+  943/ 491 : E4 22                      			XOR		A, =0x22		; is double quote?
+  944/ 493 : 7C 1C                      			BNZ		DOLAL3			; not a constant string, may be string assign
+  945/ 495 : C6 01                      			LD		A, @1, P2		; skip over quote
+  946/ 497 : 15                         			CALL	5				; APULL get target address
+  947/ 498 : 57                         			PUSH	P3				;   save P3
+  948/ 499 : 47                         			LD		P3, EA			; into P3
+  949/ 49A : C6 01                      DOLAL1:		LD		A, @1, P2		; get string char from program buffer
+  950/ 49C : E4 22                      			XOR		A, =0x22		; is double quote?
+  951/ 49E : 6C 0A                      			BZ		DOLAL2			; yes, end of string, skip
+  952/ 4A0 : E4 2F                      			XOR		A, =0x2f		; is CR?
+  953/ 4A2 : 6C 22                      			BZ		EQERR			; yes, ending quote missing error 
+  954/ 4A4 : E4 0D                      			XOR		A, =0x0d		; convert back to original char
+  955/ 4A6 : CF 01                      			ST		A, @1, P3		; store into target buffer
+  956/ 4A8 : 74 F0                      			BRA		DOLAL1			; loop
+  957/ 4AA :                            
+  958/ 4AA : C4 0D                      DOLAL2:		LD		A, =CR			; terminate target string
+  959/ 4AC : CB 00                      			ST		A, 0, P3
+  960/ 4AE : 5F                         			POP		P3				;   restore P3
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 17 - 2024年05月21日 11時24分42秒
+
+
+  961/ 4AF : 19                         			CALL	9				; GETCHR get next char from program
+  962/ 4B0 : 16                         			CALL	6				; ENDCMD done
+  963/ 4B1 :                            
+  964/ 4B1 :                            ; assume string assign
+  965/ 4B1 : 1C                         DOLAL3:		CALL	12				; EXPECT a $
+  966/ 4B2 : 24                         			DB		'$'
+  967/ 4B3 : 15                         			DB		0x15			; not found, goto SNERR
+  968/ 4B4 : 11                         			CALL	1				; FACTOR get source address
+  969/ 4B5 : 15                         			CALL	5				; APULL into EA
+  970/ 4B6 : 56                         			PUSH	P2				;   save P2
+  971/ 4B7 : 46                         			LD		P2, EA			; into P2
+  972/ 4B8 :                            
+  973/ 4B8 : 15                         DOLAL4:		CALL	5				; APULL get target address
+  974/ 4B9 : 57                         			PUSH	P3				;   save P3
+  975/ 4BA : 47                         			LD		P3, EA			; into P3
+  976/ 4BB : C6 01                      DOLAL5:		LD		A, @1, P2		; move byte from source to targer
+  977/ 4BD : CF 01                      			ST		A, @1, P3
+  978/ 4BF : E4 0D                      			XOR		A, =CR			; compare with CR
+  979/ 4C1 : 7C F8                      			BNZ		DOLAL5			; not yet, continue copying
+  980/ 4C3 :                            
+  981/ 4C3 :                            ;------------------------------------------------------------------------------
+  982/ 4C3 :                            ; This location is also the return point form LINK
+  983/ 4C3 : 5F                         DOLAL6:		POP		P3				;   restore P3
+  984/ 4C4 : 5E                         			POP		P2				;   restore P2
+  985/ 4C5 : 16                         			CALL	6				; ENDCMD
+  986/ 4C6 :                            
+  987/ 4C6 :                            ;------------------------------------------------------------------------------
+  988/ 4C6 : 1F                         EQERR:		CALL	15				; ERROR
+  989/ 4C7 : 06                         			DB		6				; 6 (ending quote missing)
+  990/ 4C8 :                            
+  991/ 4C8 :                            ;------------------------------------------------------------------------------
+  992/ 4C8 : 1F                         SNERR:		CALL	15				; ERROR    
+  993/ 4C9 : 04                         			DB		4				; 4 (syntax error)
+  994/ 4CA :                            
+  995/ 4CA :                            ;------------------------------------------------------------------------------
+  996/ 4CA :                            ; PRINT handler
+  997/ 4CA : C2 00                      PRINT0:		LD		A, 0, P2		; get char from program
+  998/ 4CC : E4 22                      			XOR		A, =0x22		; is double quote?
+  999/ 4CE : 7C 11                      			BNZ		PRINT2			; no, not a string print
+ 1000/ 4D0 :                            
+ 1001/ 4D0 :                            ; print a string constant
+ 1002/ 4D0 : C6 01                      			LD		A, @1, P2		; skip over quote
+ 1003/ 4D2 : C6 01                      PRINT1:		LD		A, @1, P2		; get next char
+ 1004/ 4D4 : E4 22                      			XOR		A, =0x22		; is double quote?
+ 1005/ 4D6 : 6C 18                      			BZ		PRINT4			; yes, done with print
+ 1006/ 4D8 : E4 2F                      			XOR		A, =0x2f		; is CR?
+ 1007/ 4DA : 6C EA                      			BZ		EQERR			; yes, error missing end quote
+ 1008/ 4DC : E4 0D                      			XOR		A, =0x0d		; convert back to original char
+ 1009/ 4DE : 17                         			CALL	7				; PUTC emit 
+ 1010/ 4DF : 74 F1                      			BRA		PRINT1			; loop
+ 1011/ 4E1 :                            
+ 1012/ 4E1 :                            ; print a string variable
+ 1013/ 4E1 : 1C                         PRINT2:		CALL	12				; EXPECT a $
+ 1014/ 4E2 : 24                         			DB		'$'
+ 1015/ 4E3 : 09                         			DB		0x09			; if not found, goto PRINT3 (could be expression)
+ 1016/ 4E4 : 11                         			CALL	1				; FACTOR get source address
+ 1017/ 4E5 : 15                         			CALL	5				; APULL into EA
+ 1018/ 4E6 : 56                         			PUSH	P2				;   save P2
+ 1019/ 4E7 : 46                         			LD		P2, EA			; into P2
+ 1020/ 4E8 : 1E                         			CALL	14				; PRTLN print the string
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 18 - 2024年05月21日 11時24分42秒
+
+
+ 1021/ 4E9 : 5E                         			POP		P2				;   restore P2
+ 1022/ 4EA : 74 04                      			BRA		PRINT4			; continue in PRINT
+ 1023/ 4EC :                            
+ 1024/ 4EC :                            ; print an expression
+ 1025/ 4EC : 10                         PRINT3:		CALL	0				; RELEXP get expression
+ 1026/ 4ED : 20 FB 04                   			JSR		PRNUM			; print numeric
+ 1027/ 4F0 :                            
+ 1028/ 4F0 :                            ; print next field
+ 1029/ 4F0 : 19                         PRINT4:		CALL	9				; GETCHR get next character
+ 1030/ 4F1 : 1C                         			CALL	12				; EXPECT a comma
+ 1031/ 4F2 : 2C                         			DB		','
+ 1032/ 4F3 : 03                         			DB		3				; if not found, goto PRINT5 (check for semicolon)
+ 1033/ 4F4 : 74 D4                      			BRA		PRINT0			; process next field
+ 1034/ 4F6 :                            
+ 1035/ 4F6 : 1C                         PRINT5:		CALL	12				; EXPECT a semicolon
+ 1036/ 4F7 : 3B                         			DB		';'
+ 1037/ 4F8 : 02                         			DB		2				; if not found, goto PRINT6 do a CRLF
+ 1038/ 4F9 : 16                         			CALL	6				; ENDCMD semicolon: terminate without CRLF
+ 1039/ 4FA : 18                         PRINT6:		CALL	8				; CRLF do a new line
+ 1040/ 4FB : 16                         			CALL	6				; ENDCMD done
+ 1041/ 4FC :                            
+ 1042/ 4FC :                            ;------------------------------------------------------------------------------
+ 1043/ 4FC :                            ; pop number off stack and print it
+ 1044/ 4FC : 83 FE                      PRNUM:		LD 		EA, -2, P3		; get last number on stack
+ 1045/ 4FE : 01                         			XCH		A, E    		; check high byte
+ 1046/ 4FF : 64 09                      			BP		PRNUM1			; is positive? yes, skip
+ 1047/ 501 : 01                         			XCH		A, E    		; restore original number
+ 1048/ 502 : 1A                         			CALL	10    			; NEGATE number
+ 1049/ 503 : 8B FE                      			ST		EA, -2, P3		; store as positive number on stack
+ 1050/ 505 : C4 2D                      			LD		A, ='-'			; load minus symbol
+ 1051/ 507 : 17                         			CALL	7				; PUTC emit it
+ 1052/ 508 : 74 03                      			BRA		PRNUM2			; skip
+ 1053/ 50A : C4 20                      PRNUM1:		LD		A, =SPACE		; emit a blank
+ 1054/ 50C : 17                         			CALL	7    			; PUTC
+ 1055/ 50D : C4 00                      PRNUM2:		LD		A, =0			; clear counter for characters
+ 1056/ 50F : CD FE                      			ST		A, TMPFE		; 
+ 1057/ 511 : 15                         			CALL	5				; APULL get number  (is positive)
+ 1058/ 512 : 23 F6 FF                     			PLI		P3, =TMPF6		; save P3 and load TMPF6
+ 1059/ 515 : A4 0A 00                   PRNUM3:		LD		T, =10			; load divisor 10    
+ 1060/ 518 : 8D FC                      			ST		EA, TMPFC		; store dividend temporary
+ 1061/ 51A : 0D                         			DIV		EA, T			; divide by 10
+ 1062/ 51B : 08                         			PUSH	EA				; save remainder
+ 1063/ 51C : A4 0A 00                   			LD		T, =10			; multiplier 10
+ 1064/ 51F : 2C                         			MPY		EA, T			; multiply, is now (VAL DIV 10) * 10, i.e. last digit stripped
+ 1065/ 520 : 0B                         			LD		EA, T			; get this
+ 1066/ 521 : 1A                         			CALL	10    			; NEGATE
+ 1067/ 522 : B5 FC                      			ADD		EA, TMPFC		; extract least digit
+ 1068/ 524 : CF 01                      			ST		A, @1, P3		; push onto stack
+ 1069/ 526 : 95 FE                      			ILD		A, TMPFE		; increment char counter
+ 1070/ 528 : 3A                         			POP		EA    			; restore remainder
+ 1071/ 529 : 7C EA                      			BNZ		PRNUM3			; unless zero, loop for another digit
+ 1072/ 52B : 01                         			XCH		A, E			; also high byte
+ 1073/ 52C : 6C 03                      			BZ		PRNUM4			; if zero, go emitting
+ 1074/ 52E : 01                         			XCH		A, E    		; restore remainder
+ 1075/ 52F : 74 E4                      			BRA		PRNUM3			; loop for another digit
+ 1076/ 531 : C7 FF                      PRNUM4:  	LD		A, @-1, P3		; get last pushed digit first
+ 1077/ 533 : F4 30                      			ADD		A, ='0'			; make it ASCII digit    
+ 1078/ 535 : 17                         			CALL	7				; PUTC
+ 1079/ 536 : 9D FE                      			DLD		A, TMPFE		; decrement count	
+ 1080/ 538 : 7C F7                      			BNZ		PRNUM4    		; loop until all digits done
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 19 - 2024年05月21日 11時24分42秒
+
+
+ 1081/ 53A : C4 20                      			LD		A, =SPACE		; emit space
+ 1082/ 53C : 17                         			CALL	7				; PUTC
+ 1083/ 53D : 5F                         			POP		P3				; restore arithmetic stack pointer
+ 1084/ 53E : 5C                         			RET
+ 1085/ 53F :                            ;------------------------------------------------------------------------------
+ 1086/ 53F :                            ; print string pointed to by P2, until char has bit 7 is set or is CR
+ 1087/ 53F : C6 01                      PRTLN:		LD		A, @1, P2		; get next char from buffer
+ 1088/ 541 : E4 0D                      			XOR		A, =CR			; is CR?
+ 1089/ 543 : 6C 05                      			BZ		PRTLN1			; yes exit
+ 1090/ 545 : E4 0D                      			XOR 	A, =CR			; make original char again
+ 1091/ 547 : 17                         			CALL 	7				; PUTC emit it
+ 1092/ 548 : 64 F5                      			BP		PRTLN			; if positive, loop
+ 1093/ 54A : 5C                         PRTLN1		RET						; exit
+ 1094/ 54B :                            ;------------------------------------------------------------------------------
+ 1095/ 54B :                            ; get next char from buffer
+ 1096/ 54B : C6 01                      GETNXC:		LD		A, @1, P2		; advance P2
+ 1097/ 54D :                            ;------------------------------------------------------------------------------
+ 1098/ 54D :                            ; get character from buffer pointed to by P2, into A (call 9)
+ 1099/ 54D : C2 00                      GETCHR:		LD		A, 0, P2		; char from buffer
+ 1100/ 54F : D4 7F                      			AND		A, =0x7f		; mask 7 bits
+ 1101/ 551 : 48                         			LD		E, A			; into E
+ 1102/ 552 : E4 20                      			XOR		A, =SPACE		; is space?    
+ 1103/ 554 : 6C F5                      			BZ		GETNXC			; skip over it, loop to next    
+ 1104/ 556 : E4 2A                      			XOR		A, =0x2a		; is LF (SPACE xor 0x0a)?
+ 1105/ 558 : 6C F1                      			BZ		GETNXC			; yes, skip over it, loop to next    
+ 1106/ 55A : 40                         			LD		A, E			; back into A
+ 1107/ 55B : 6C EE                      			BZ		GETNXC			; if zero, loop over it
+ 1108/ 55D : 5C                         			RET
+ 1109/ 55E :                            ;------------------------------------------------------------------------------
+ 1110/ 55E :                            ; EXPECT char following in text, if not found (call 12)
+ 1111/ 55E :                            ; call it as:
+ 1112/ 55E :                            ;			CALL 12
+ 1113/ 55E :                            ;			DB	'chartomatch'
+ 1114/ 55E :                            ;			DB	offset to jump to if no match
+ 1115/ 55E : 3A                         EXPECT:		POP		EA				; get return addr
+ 1116/ 55F : B5 E8                      			ADD		EA, ONE    		; advance to following byte
+ 1117/ 561 : 08                         			PUSH	EA				; put return on stack again (continue here if matched)
+ 1118/ 562 : 57                         			PUSH	P3				; save P3
+ 1119/ 563 : 47                         			LD		P3, EA			; point to char to match
+ 1120/ 564 : C3 00                      			LD		A, 0, P3		; load char to match
+ 1121/ 566 : E2 00                      			XOR		A, 0, P2		; compare with buffer
+ 1122/ 568 : 5F                         			POP		P3				; restore P3
+ 1123/ 569 : 6C 23                      			BZ		GETVA3			; char matched, advance to next and exit
+ 1124/ 56B : 74 0C                      			BRA		GETVA1			; otherweise error
+ 1125/ 56D :                            
+ 1126/ 56D :                            ;------------------------------------------------------------------------------
+ 1127/ 56D :                            ; expect variable, and push it
+ 1128/ 56D :                            ; call as:
+ 1129/ 56D :                            ;			JSR GETVAR
+ 1130/ 56D :                            ;			DB	offset to jump to if not variable
+ 1131/ 56D : C2 00                      GETVAR:		LD		A, 0, P2		; get character from buffer
+ 1132/ 56F : 48                         			LD		E, A			; save in E
+ 1133/ 570 : FC 5B                      			SUB		A, ='Z'+1		; subtract 'Z'+1
+ 1134/ 572 : 64 05                      			BP		GETVA1			; is >=, skip
+ 1135/ 574 : 40                         			LD		A, E			; restore char
+ 1136/ 575 : FC 41                      			SUB		A, ='A'			; subtract 'A'
+ 1137/ 577 : 64 0D                      			BP		GETVA2			; is an alpha char, skip
+ 1138/ 579 :                            
+ 1139/ 579 :                            ; go to the offset that return address points to
+ 1140/ 579 : 3A                         GETVA1:		POP		EA				; pop return address (pointing to error code)
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 20 - 2024年05月21日 11時24分42秒
+
+
+ 1141/ 57A : 8D F6                      			ST		EA, TMPF6		; save in temporary
+ 1142/ 57C : 57                         			PUSH	P3				; save P3
+ 1143/ 57D : 47                         			LD		P3, EA			; get return addr in P3
+ 1144/ 57E : 85 EA                      			LD		EA, ZERO		; clear EA
+ 1145/ 580 : C3 01                      			LD		A, 1, P3		; get next location offset
+ 1146/ 582 : B5 F6                      			ADD		EA, TMPF6		; add return addr
+ 1147/ 584 : 5F                         			POP		P3				; restore P3
+ 1148/ 585 : 44                         			LD		PC, EA			; go to that offset (no variable found)
+ 1149/ 586 :                            
+ 1150/ 586 : 0E                         GETVA2:		SL		A				; is variable, make offset into var table
+ 1151/ 587 : 01                         			XCH		A, E			; put into E
+ 1152/ 588 : C4 00                      			LD		A, =0			; clear A
+ 1153/ 58A : 01                         			XCH		A, E			; make 16 bit unsigned
+ 1154/ 58B : B5 C6                      			ADD		EA, EXTRAM		; add ext ram base
+ 1155/ 58D : 14                         			CALL	4				; APUSH
+ 1156/ 58E :                            
+ 1157/ 58E : C6 01                      GETVA3:		LD		A, @1, P2		; advance to next buffer pos
+ 1158/ 590 : 19                         GETVA4:		CALL	9				; GETCHR
+ 1159/ 591 : 3A                         			POP		EA				; return addr
+ 1160/ 592 : B5 E8                      			ADD		EA, ONE			; skip over error jump
+ 1161/ 594 : 44                         			LD		PC, EA			; continue in interpreter
+ 1162/ 595 :                            ;------------------------------------------------------------------------------
+ 1163/ 595 :                            ; NUMBER	expect a number and push it (call 13)
+ 1164/ 595 :                            ; call as:
+ 1165/ 595 :                            ;			CALL 13
+ 1166/ 595 :                            ;			DB offset to jump to if no number
+ 1167/ 595 : C2 00                      NUMBER:		LD		A, 0, P2		; get char from buffer
+ 1168/ 597 : 2D E0                      			BND		GETVA1, PC		; if not digit, skip to next loc
+ 1169/ 599 : 85 EA                      			LD		EA, ZERO		; load 0
+ 1170/ 59B : 8D F6                      			ST		EA, TMPF6		; store temporary
+ 1171/ 59D : 09                         NUMBE1:		LD		T, EA			; store into T
+ 1172/ 59E : C6 01                      NUMBE11:	LD		A, @1, P2		; get digit and advance
+ 1173/ 5A0 : 2D 19                      			BND		NUMBE4, PC		; skip if no more digits
+ 1174/ 5A2 : CD F6                      			ST		A, TMPF6		; store digit    
+ 1175/ 5A4 : 84 0A 00                   			LD		EA, =10			; factor 10
+ 1176/ 5A7 : 2C                         			MPY		EA, T			; multiply
+ 1177/ 5A8 : 58                         			OR		A, E			; check overflow?
+ 1178/ 5A9 : 7C 0E                      			BNZ		NUMBE3			; yes, skip
+ 1179/ 5AB : 0B                         			LD		EA, T			; move result to EA
+ 1180/ 5AC : B5 F6                      			ADD		EA, TMPF6		; add digit
+ 1181/ 5AE : 09                         			LD		T, EA			; store intermediate result
+ 1182/ 5AF : 40                         			LD		A, E			; high byte
+ 1183/ 5B0 : 64 02                      			BP		NUMBE2			; skip if no overflow (became negative)
+ 1184/ 5B2 : 74 05                      			BRA		NUMBE3			; not okay
+ 1185/ 5B4 : 06                         NUMBE2:		LD		A, S			; get status    
+ 1186/ 5B5 : D4 C0                      			AND		A, =0xc0		; mask out OV, CY
+ 1187/ 5B7 : 6C E5                      			BZ		NUMBE11			; loop unless error
+ 1188/ 5B9 : 1F                         NUMBE3:		CALL	15				; ERROR
+ 1189/ 5BA : 05                         			DB		5				; 5 (value format)
+ 1190/ 5BB : C6 FF                      NUMBE4:		LD		A, @-1, P2	; point back to non digit
+ 1191/ 5BD : 0B                         			LD		EA, T			; get accumulated value    
+ 1192/ 5BE : 14                         			CALL	4				; APUSH
+ 1193/ 5BF : 74 CF                      			BRA		GETVA4			; advance to next position and skip over error offset
+ 1194/ 5C1 :                            ;------------------------------------------------------------------------------
+ 1195/ 5C1 :                            	; intialize interpreter variables
+ 1196/ 5C1 : 84 00 00                   INITAL:		LD		EA, =0x0000		; constant 0
+ 1197/ 5C4 : 8D C3                      			ST		EA, CURRNT		; reset current line number
+ 1198/ 5C6 : 85 C6                      INITA1:		LD		EA, EXTRAM		; get start addr of external RAM
+ 1199/ 5C8 : B4 34 00                   			ADD		EA, =52			; add offset to next field (26 variables)
+ 1200/ 5CB : 8D C8                      			ST		EA, AESTK 		; store start of arithmetic stack
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 21 - 2024年05月21日 11時24分42秒
+
+
+ 1201/ 5CD : B4 1A 00                   			ADD		EA, =26			; add offset to next field
+ 1202/ 5D0 : 8D CA                      			ST		EA, SBRSTK		; store start of GOSUB stack
+ 1203/ 5D2 : 8D DE                      			ST		EA, SBRPTR		; store pointer to GOSUB level
+ 1204/ 5D4 : B4 10 00                   			ADD		EA, =16			; add offset to next field
+ 1205/ 5D7 : 8D CC                      			ST		EA, DOSTK		; store start of DO stack
+ 1206/ 5D9 : 8D DA                      			ST		EA, DOPTR		; store pointer to DO level
+ 1207/ 5DB : B4 10 00                   			ADD		EA, =16			; add offset to next field
+ 1208/ 5DE : 8D CE                      			ST		EA, FORSTK		; store start of FOR stack
+ 1209/ 5E0 : 8D DC                      			ST		EA, FORPTR		; store pointer to FOR level
+ 1210/ 5E2 : B4 1C 00                   			ADD		EA, =28			; add offset to next field
+ 1211/ 5E5 : 8D D0                      			ST		EA, BUFAD		; store pointer to line buffer
+ 1212/ 5E7 : 20 E4 09                   			JSR		INITBD			; initialize baud rate
+ 1213/ 5EA :                            									; BUG! ZERO is not yet initialized on first call!
+ 1214/ 5EA : C4 34                      			LD		A, =52			; size of variable table in bytes
+ 1215/ 5EC : CD F6                      			ST		A, TMPF6		; store it
+ 1216/ 5EE : 85 C6                      			LD		EA, EXTRAM		; load RAM BASE into P3
+ 1217/ 5F0 : 47                         			LD		P3, EA
+ 1218/ 5F1 : 84 00 00                   			LD		EA, =0000		; initialize constant zero
+ 1219/ 5F4 : 8D EA                      			ST		EA, ZERO
+ 1220/ 5F6 : 8D E0                      			ST		EA, INTVEC		; clear vector for current interrupt
+ 1221/ 5F8 : 8D E2                      			ST		EA, INTAVC		; clear vector for Interrupt A
+ 1222/ 5FA : 8D E4                      			ST		EA, INTBVC		; clear vector for Interrupt B
+ 1223/ 5FC : 8D C0                      			ST		EA, MULOV
+ 1224/ 5FE : CD E6                      			ST		A, BRKFLG		; enable breaks
+ 1225/ 600 : C4 00                      INITA2:		LD		A, =00			; clear A
+ 1226/ 602 : CF 01                      			ST		A, @1, P3		; clear variable area
+ 1227/ 604 : 9D F6                      			DLD		A, TMPF6		; decrement counter
+ 1228/ 606 : 7C F8                      			BNZ		INITA2			; until done
+ 1229/ 608 : C4 01                      			LD		A, =01			; low byte = 01, EA now 0001
+ 1230/ 60A : 8D E8                      			ST		EA, ONE			; store constant 1
+ 1231/ 60C : 85 C8                      			LD		EA, AESTK		; load AESTK into P3
+ 1232/ 60E : 47                         			LD		P3, EA 
+ 1233/ 60F : C4 52                      			LD		A, ='R'			; store 'R'
+ 1234/ 611 : CD C5                      			ST		A, RUNMOD
+ 1235/ 613 : 5C                         			RET						; exit
+ 1236/ 614 :                            
+ 1237/ 614 :                            ;------------------------------------------------------------------------------
+ 1238/ 614 :                            ; CMPTOK (CALL 11) compare current position with token from list in P3
+ 1239/ 614 :                            ; table is built this way:
+ 1240/ 614 :                            ;			DB		'token1'
+ 1241/ 614 :                            ;			DB		jmp displacement OR 0x80
+ 1242/ 614 :                            ;			DB		'token2'
+ 1243/ 614 :                            ;			DB		jmp displacement OR 0x80
+ 1244/ 614 :                            ;			DB		jmp target if not found OR 0x80
+ 1245/ 614 : 3A                         CMPTOK:		POP		EA				; drop return address
+ 1246/ 615 : 56                         CMPTO1:		PUSH	P2				; save buffer pointer position
+ 1247/ 616 : C7 01                      			LD		A, @1, P3		; get byte from table
+ 1248/ 618 : 64 15                      			BP		CMPTO4			; if positive, belongs to token to match
+ 1249/ 61A :                            									; negative: matched a complete token
+ 1250/ 61A : 74 05                      			BRA		CMPTO3			; value is location offset to jump to
+ 1251/ 61C :                            									; note that the last char in table is negative:
+ 1252/ 61C :                            									; the default location always reached if no token matches
+ 1253/ 61C : C7 01                      CMPTO2:		LD		A, @1, P3		; next char of token from table
+ 1254/ 61E : 64 0F                      			BP		CMPTO4			; is end of token? yes, found one
+ 1255/ 620 : 19                         			CALL	9				; GETCHR, read char from buffer
+ 1256/ 621 :                            									; P2 now points to char after recognized token
+ 1257/ 621 : 3A                         CMPTO3:		POP		EA				; drop old P2 (start of token)
+ 1258/ 622 : 85 EA                      			LD		EA, ZERO		; preload a zero
+ 1259/ 624 : C7 FF                      			LD		A, @-1, P3		; get the location offset
+ 1260/ 626 : D4 7F                      			AND		A, =0x7f		; discard high bit
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 22 - 2024年05月21日 11時24分42秒
+
+
+ 1261/ 628 : 8D F6                      			ST		EA, TMPF6    	; store temporary
+ 1262/ 62A : 33                         			LD		EA, P3			; get pointer postion
+ 1263/ 62B : B5 F6                      			ADD		EA, TMPF6    	; add offset
+ 1264/ 62D : 5F                         			POP		P3				; restore P3
+ 1265/ 62E : 44                         			LD		PC, EA			; go to location
+ 1266/ 62F : E6 01                      CMPTO4:		XOR		A, @1, P2		; compare token char with buffer
+ 1267/ 631 : D4 7F                      			AND		A, =0x7f		; only select 7 bits
+ 1268/ 633 : 6C E7                      			BZ		CMPTO2			; matches, loop
+ 1269/ 635 : 5E                         			POP		P2				; does not match, reload buffer pointer
+ 1270/ 636 : C7 01                      CMPTO5:		LD		A, @1, P3		; get char from table, advance until end of token
+ 1271/ 638 : 64 FC                      			BP		CMPTO5    		; loop as long token char
+ 1272/ 63A : 74 D9                      			BRA		CMPTO1			; retry next token from table
+ 1273/ 63C :                            
+ 1274/ 63C :                            ;------------------------------------------------------------------------------
+ 1275/ 63C :                            ; get relational expression (call 0)
+ 1276/ 63C :                            ; term {<|<=|=|<>|>|>=} term
+ 1277/ 63C :                            ;
+ 1278/ 63C :                            ; note the precedence seems to be warped:
+ 1279/ 63C :                            ; I'd expect something like 
+ 1280/ 63C :                            ;	X>5 AND X<10 to match an X between 5 and 10,
+ 1281/ 63C :                            ; but TERM binds the AND operator stronger
+ 1282/ 63C :                            ; thus it is interpreted as
+ 1283/ 63C :                            ;   X > (5 AND X) < 10
+ 1284/ 63C :                            ; which results in an error 3
+ 1285/ 63C : 20 8E 06                   RELEXP:		JSR 	TERM			; get first operand
+ 1286/ 63F : 23 43 06                   			PLI		P3, =OPTBL1		; list of comparison operators
+ 1287/ 642 : 1B                         			CALL	11				; CMPTOK
+ 1288/ 643 : 3D                         OPTBL1:		DB		'='
+ 1289/ 644 : 8E                         			DB		0x8e			; to RELEQ
+ 1290/ 645 : 3C 3D                      			DB		'<='
+ 1291/ 647 : 90                         			DB		0x90			; to RELLE
+ 1292/ 648 : 3C 3E                      			DB		'<>'
+ 1293/ 64A : 92                         			DB		0x92			; to RELNE
+ 1294/ 64B : 3C                         			DB		'<'
+ 1295/ 64C : 95                         			DB		0x95			; to RELLT
+ 1296/ 64D : 3E 3D                      			DB		'>='
+ 1297/ 64F : 97                         			DB		0x97    		; to RELGE
+ 1298/ 650 : 3E                         			DB		'>'
+ 1299/ 651 : 9A                         			DB		0x9a			; to RELGT
+ 1300/ 652 : A6                         			DB		0xa6			; default case to RELEX3
+ 1301/ 653 :                            
+ 1302/ 653 : 13                         RELEQ:		CALL	3				; COMPAR
+ 1303/ 654 : D4 02                      			AND		A, =0x02		; is equal?
+ 1304/ 656 : 74 17                      			BRA		RELEX1
+ 1305/ 658 : 13                         RELLE:		CALL	3				; COMPAR
+ 1306/ 659 : D4 82                      			AND		A, =0x82		; is less or equal?
+ 1307/ 65B : 74 12                      			BRA		RELEX1
+ 1308/ 65D : 13                         RELNE:		CALL	3				; COMPAR
+ 1309/ 65E : D4 81                      			AND		A, =0x81		; is less or greater?
+ 1310/ 660 : 74 0D                      			BRA		RELEX1
+ 1311/ 662 : 13                         RELLT:		CALL	3				; COMPAR
+ 1312/ 663 : D4 80                      			AND		A, =0x80		; is less?
+ 1313/ 665 : 74 08                      			BRA		RELEX1
+ 1314/ 667 : 13                         RELGE:		CALL	3				; COMPAR
+ 1315/ 668 : D4 03                      			AND		A, =0x03		; is greater or equal?
+ 1316/ 66A : 74 03                      			BRA		RELEX1
+ 1317/ 66C : 13                         RELGT:		CALL	3				; COMPAR
+ 1318/ 66D : D4 01                      			AND		A, =0x01		; is greater?
+ 1319/ 66F : 6C 05                      RELEX1:		BZ		RELEX2			; condition not matched
+ 1320/ 671 : 84 FF FF                   			LD		EA, =0xffff		; return -1 (condition matched)
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 23 - 2024年05月21日 11時24分42秒
+
+
+ 1321/ 674 : 14                         			CALL	4				; APUSH
+ 1322/ 675 : 5C                         			RET
+ 1323/ 676 : 85 EA                      RELEX2:		LD		EA, ZERO		; return 0 (condition not matched)
+ 1324/ 678 : 14                         			CALL	4				; APUSH
+ 1325/ 679 : 5C                         RELEX3:		RET
+ 1326/ 67A :                            
+ 1327/ 67A :                            ;------------------------------------------------------------------------------
+ 1328/ 67A :                            ; COMPAR	(call 3)
+ 1329/ 67A :                            ; get a second operand and compare it to the first one on STACK
+ 1330/ 67A : 20 8E 06                   COMPAR:		JSR		TERM			; get second operand
+ 1331/ 67D : 12                         			CALL	2				; SAVOP
+ 1332/ 67E : BD F6                      			SUB		EA, TMPF6		; compute 1stOP - 2ndOP
+ 1333/ 680 : 01                         			XCH		A, E			; highbyte
+ 1334/ 681 : 64 03                      			BP		COMPA1			; positive, i.e. 1st >= 2nd ?
+ 1335/ 683 : C4 80                      			LD		A, =0x80		; no, set bit 7 (less)
+ 1336/ 685 : 5C                         			RET
+ 1337/ 686 : 58                         COMPA1:		OR		A, E			; even zero, i.e. 1st = 2nd ?
+ 1338/ 687 : 6C 03                      			BZ		COMPA2			; yes
+ 1339/ 689 : C4 01                      			LD		A, =0x01		; no, set bit 0 (greater)
+ 1340/ 68B : 5C                         			RET
+ 1341/ 68C : C4 02                      COMPA2: 	LD		A, =0x02		; set bit 1 (equal)
+ 1342/ 68E : 5C                         			RET
+ 1343/ 68F :                            
+ 1344/ 68F :                            ;------------------------------------------------------------------------------
+ 1345/ 68F :                            ; evaluate a TERM:   {+|-} factor {+|-} factor
+ 1346/ 68F : 1C                         TERM:		CALL	12				; EXPECT an optional minus symbol
+ 1347/ 690 : 2D                         			DB		'-'				; 
+ 1348/ 691 : 09                         			DB		9				; if not found, skip to TERM2
+ 1349/ 692 : 20 C7 06                   			JSR		MDTERM			; get first mul/div term
+ 1350/ 695 : 15                         			CALL	5				; APULL into EA
+ 1351/ 696 : 1A                         			CALL	10				; NEGATE negate
+ 1352/ 697 : 14                         TERM1:		CALL	4				; APUSH again on stack
+ 1353/ 698 : 74 06                      			BRA		TERM4			; continue
+ 1354/ 69A : 1C                         TERM2:		CALL	12				; EXPECT an optional plus symbol
+ 1355/ 69B : 2B                         			DB		'+'				;
+ 1356/ 69C : 01                         			DB		1				; if not found, continue at TERM3
+ 1357/ 69D : 20 C7 06                   TERM3:		JSR		MDTERM			; get a mul/div term
+ 1358/ 6A0 : 23 A4 06                   TERM4:		PLI		P3, =CMDT11		; load add/sub/or operator table
+ 1359/ 6A3 : 1B                         			CALL	11				; CMPTOK
+ 1360/ 6A4 :                            CMDT11:
+ 1361/ 6A4 : 2B                         			DB		'+'
+ 1362/ 6A5 : 86                         			DB		0x86			; to TERM5
+ 1363/ 6A6 : 2D                         			DB		'-'
+ 1364/ 6A7 : 8C                         			DB		0x8c			; to TERM6
+ 1365/ 6A8 : 4F 52                      			DB		'OR'
+ 1366/ 6AA : 91                         			DB		0x91			; to TERM7
+ 1367/ 6AB : C5                         			DB		0xc5			; default to FACTOR1 (RET)
+ 1368/ 6AC :                            ; process MDTERM + MDTERM
+ 1369/ 6AC : 20 C7 06                   TERM5:		JSR		MDTERM			; get second mul/div term
+ 1370/ 6AF : 12                         			CALL	2				; SAVOP
+ 1371/ 6B0 : B5 F6                      			ADD		EA, TMPF6		; compute sum
+ 1372/ 6B2 : 74 E3                      			BRA		TERM1			; loop for further term of this precedence
+ 1373/ 6B4 :                            ; process MDTERM - MDTERM
+ 1374/ 6B4 : 20 C7 06                   TERM6:		JSR		MDTERM			; get second mul/div term
+ 1375/ 6B7 : 12                         			CALL	2				; SAVOP
+ 1376/ 6B8 : BD F6                      			SUB		EA, TMPF6		; compute difference
+ 1377/ 6BA : 74 DB                      			BRA		TERM1			; loop for further term of this precedence
+ 1378/ 6BC :                            ; process MDTERM OR MDTERM
+ 1379/ 6BC : 20 C7 06                   TERM7:		JSR		MDTERM			; get second operand
+ 1380/ 6BF : 12                         			CALL	2				; SAVOP
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 24 - 2024年05月21日 11時24分42秒
+
+
+ 1381/ 6C0 : DD F6                      			OR		A, TMPF6		; do byte by byte OR
+ 1382/ 6C2 : 01                         			XCH		A, E
+ 1383/ 6C3 : DD F7                      			OR		A, TMPF6+1
+ 1384/ 6C5 : 01                         			XCH		A, E
+ 1385/ 6C6 : 74 CF                      			BRA		TERM1			; loop for further term of this precedence
+ 1386/ 6C8 :                            
+ 1387/ 6C8 :                            ;------------------------------------------------------------------------------
+ 1388/ 6C8 :                            ; evaluate multiplicative term		factor {*|/} factor
+ 1389/ 6C8 : 11                         MDTERM:		CALL	1				; FACTOR get first factor
+ 1390/ 6C9 : 23 CD 06                   MDTER0:		PLI		P3, =CMDT13		; load table of mul/div/and operators
+ 1391/ 6CC : 1B                         			CALL	11				; CMPTOK
+ 1392/ 6CD : 2A                         CMDT13:		DB		'*'
+ 1393/ 6CE : 87                         			DB		0x87			; to MDTER1
+ 1394/ 6CF : 2F                         			DB		'/'
+ 1395/ 6D0 : 8D                         			DB		0x8d			; to MDTER3
+ 1396/ 6D1 : 41 4E 44                   			DB		'AND'
+ 1397/ 6D4 : 90                         			DB		0x90			; to MDTER4
+ 1398/ 6D5 : 9B                         			DB		0x9b			; default to FACTO1 (return)
+ 1399/ 6D6 :                            
+ 1400/ 6D6 :                            ; process	FACTOR * FACTOR
+ 1401/ 6D6 : 11                         MDTER1:		CALL	1				; FACTOR get 2nd operand
+ 1402/ 6D7 : 12                         			CALL	2				; SAVOP
+ 1403/ 6D8 : 20 F4 07                   			JSR		MULTOP			; multiply EA * TMPF6
+ 1404/ 6DB : 14                         MDTER2:		CALL	4				; APUSH push result on stack
+ 1405/ 6DC : 74 EB                      			BRA		MDTER0			; loop for further multiplicative term
+ 1406/ 6DE :                            ; process FACTOR / FACTOR (handle division by zero in subroutine)
+ 1407/ 6DE : 11                         MDTER3:		CALL	1				; FACTOR get 2nd operand
+ 1408/ 6DF : 12                         			CALL	2				; SAVOP
+ 1409/ 6E0 : 20 0C 08                   			JSR		DIVOP			; divide EA / TMPF6
+ 1410/ 6E3 : 74 F6                      			BRA		MDTER2			; loop for further multiplicative term
+ 1411/ 6E5 :                            ; process FACTOR AND FACTOR
+ 1412/ 6E5 : 11                         MDTER4:		CALL	1				; FACTOR get 2nd operand
+ 1413/ 6E6 : 12                         			CALL	2				; SAVOP
+ 1414/ 6E7 : D5 F6                      			AND		A, TMPF6		; do byte by byte AND
+ 1415/ 6E9 : 01                         			XCH		A, E
+ 1416/ 6EA : D5 F7                      			AND		A, TMPF6+1
+ 1417/ 6EC : 01                         			XCH		A, E
+ 1418/ 6ED : 74 EC                      			BRA		MDTER2			; loop for further multiplicative term
+ 1419/ 6EF :                            
+ 1420/ 6EF :                            ;------------------------------------------------------------------------------
+ 1421/ 6EF :                            ; FACTOR	(call 1) get a factor: number, var, function, (RELEXP)
+ 1422/ 6EF : 1D                         FACTOR:		CALL	13				; NUMBER get number in sequence
+ 1423/ 6F0 : 02                         			DB		2				; if not found continue at FACTO2
+ 1424/ 6F1 : 5C                         FACTO1:		RET						; has numeric operand on stack, done
+ 1425/ 6F2 :                            
+ 1426/ 6F2 : 23 F6 06                   FACTO2:		PLI		P3, =CMDT12		; load table of standard functions
+ 1427/ 6F5 : 1B                         			CALL	11				; CMPTOK
+ 1428/ 6F6 :                            CMDT12:
+ 1429/ 6F6 : 28                         			DB		'('				; left parenthesis (subexpression)
+ 1430/ 6F7 : B2                         			DB		0xb2			; to LPAREN
+ 1431/ 6F8 : 40                         			DB		'@'				; right hand side @
+ 1432/ 6F9 : B7                         			DB		0xb7			; to ATRH
+ 1433/ 6FA : 23                         			DB		'#'				; hex operator
+ 1434/ 6FB : E5                         			DB		0xe5			; to HASHFN
+ 1435/ 6FC : 4E 4F 54                   			DB		'NOT'			; NOT operator
+ 1436/ 6FF : B7                         			DB		0xb7			; to NOTFN
+ 1437/ 700 : 53 54 41 54                			DB		'STAT'			; right hand side STAT
+ 1438/ 704 : BC                         			DB		0xbc			; to STATRH
+ 1439/ 705 : 54 4F 50                   			DB		'TOP'			; right hand side TOP
+ 1440/ 708 : BB                         			DB		0xbb			; to TOPFN
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 25 - 2024年05月21日 11時24分42秒
+
+
+ 1441/ 709 : 49 4E 43                   			DB		'INC'			; INC(X) function
+ 1442/ 70C : BD                         			DB		0xbd			; to INCFN
+ 1443/ 70D : 44 45 43                   			DB		'DEC'			; DEC(X) function
+ 1444/ 710 : C2                         			DB		0xc2			; to DECFN
+ 1445/ 711 : 4D 4F 44                   			DB		'MOD'			; MOD(X,Y) function
+ 1446/ 714 : CE                         			DB		0xce			; to MODFN
+ 1447/ 715 : 52 4E 44                   			DB		'RND'			; RND(X,Y) function
+ 1448/ 718 : E5                         			DB		0xe5			; to RNDFN
+ 1449/ 719 : 80                         			DB		0x80			; default to FACTO3 (variable)
+ 1450/ 71A : 20 6C 05                   FACTO3:		JSR		GETVAR
+ 1451/ 71D : 12                         			DB		0x12			; if not var, goto SNERR3
+ 1452/ 71E : 20 22 07                   			JSR		PEEK
+ 1453/ 721 : 14                         			CALL	4				; APUSH
+ 1454/ 722 : 5C                         			RET
+ 1455/ 723 :                            
+ 1456/ 723 :                            ;------------------------------------------------------------------------------
+ 1457/ 723 :                            ; peek word at address on stack
+ 1458/ 723 : 15                         PEEK:		CALL	5				; APULL
+ 1459/ 724 : 57                         			PUSH	P3
+ 1460/ 725 : 47                         			LD		P3, EA
+ 1461/ 726 : 83 00                      			LD		EA, 0, P3
+ 1462/ 728 : 5F                         			POP		P3
+ 1463/ 729 : 5C                         			RET
+ 1464/ 72A :                            
+ 1465/ 72A :                            ;------------------------------------------------------------------------------
+ 1466/ 72A :                            ; handle parenthesized expression '(' expr ')'
+ 1467/ 72A : 10                         LPAREN:		CALL	0				; RELEXP get expression
+ 1468/ 72B : 1C                         			CALL	12				; EXPECT a closing parenthesis
+ 1469/ 72C : 29                         			DB		')'
+ 1470/ 72D : 02                         			DB		0x02			; if not found, goto SNERR3
+ 1471/ 72E : 5C                         			RET
+ 1472/ 72F :                            
+ 1473/ 72F :                            ;------------------------------------------------------------------------------
+ 1474/ 72F : 1F                         SNERR3:		CALL	15				; ERROR
+ 1475/ 730 : 04                         			DB		4				; 4 (syntax error)
+ 1476/ 731 :                            
+ 1477/ 731 :                            ;------------------------------------------------------------------------------
+ 1478/ 731 :                            ; @ operator
+ 1479/ 731 : 11                         ATRH:		CALL	1				; FACTOR get the address to peek
+ 1480/ 732 : 20 22 07                   			JSR		PEEK			; read memory
+ 1481/ 735 : 74 24                      			BRA		DECFN2			; make 16 bit result on stack
+ 1482/ 737 :                            
+ 1483/ 737 :                            ;------------------------------------------------------------------------------
+ 1484/ 737 :                            ; NOT operator
+ 1485/ 737 : 11                         NOTFN:		CALL	1				; FACTOR get argument
+ 1486/ 738 : 15                         			CALL	5				; APULL into EA
+ 1487/ 739 : E4 FF                      			XOR		A, =0xff		; do byte by byte complement
+ 1488/ 73B : 01                         			XCH		A, E
+ 1489/ 73C : E4 FF                      			XOR		A, =0xff
+ 1490/ 73E : 01                         			XCH		A, E
+ 1491/ 73F : 14                         			CALL	4				; APUSH result on stack
+ 1492/ 740 : 5C                         			RET
+ 1493/ 741 :                            
+ 1494/ 741 :                            ;------------------------------------------------------------------------------
+ 1495/ 741 :                            ; STAT function
+ 1496/ 741 : 06                         STATRH:		LD		A, S			; get the current status reg
+ 1497/ 742 : 74 17                      			BRA		DECFN2			; make 16 bit result on stack
+ 1498/ 744 :                            
+ 1499/ 744 :                            ;------------------------------------------------------------------------------
+ 1500/ 744 :                            ; TOP function
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 26 - 2024年05月21日 11時24分42秒
+
+
+ 1501/ 744 : 85 D6                      TOPFN:		LD		EA, TXTUNF		; get current top of program area
+ 1502/ 746 : B5 E8                      			ADD		EA, ONE			; add 1 to return next free location
+ 1503/ 748 : 14                         			CALL	4				; APUSH	push on stack
+ 1504/ 749 : 5C                         			RET
+ 1505/ 74A :                            
+ 1506/ 74A :                            ;------------------------------------------------------------------------------
+ 1507/ 74A :                            ; INC function
+ 1508/ 74A : 20 A2 07                   INCFN:		JSR		ARGONE			; get a single function arg into EA
+ 1509/ 74D : 56                         			PUSH	P2				;   save P2
+ 1510/ 74E : 46                         			LD		P2, EA			; put as address into P2
+ 1511/ 74F : 92 00                      			ILD		A, 0, P2		; increment this cell
+ 1512/ 751 : 74 07                      			BRA		DECFN1			; return the new result as 16 bit
+ 1513/ 753 :                            
+ 1514/ 753 :                            ;------------------------------------------------------------------------------
+ 1515/ 753 :                            ; DEC function
+ 1516/ 753 : 20 A2 07                   DECFN:		JSR		ARGONE			; get a single function arg into EA
+ 1517/ 756 : 56                         			PUSH	P2				;   save P2
+ 1518/ 757 : 46                         			LD		P2, EA			; put as address into P2
+ 1519/ 758 : 9A 00                      			DLD		A, 0, P2		; decrement this cell
+ 1520/ 75A : 5E                         DECFN1:		POP		P2				;   restore old P2
+ 1521/ 75B : 01                         DECFN2:		XCH		A, E			; save result
+ 1522/ 75C : C4 00                      			LD		A, =0x00		; make zero high byte
+ 1523/ 75E : 01                         			XCH		A, E			; restore result as low byte
+ 1524/ 75F : 14                         			CALL	4				; APUSH 16 bit result on stack
+ 1525/ 760 : 5C                         			RET
+ 1526/ 761 :                            
+ 1527/ 761 :                            ;------------------------------------------------------------------------------
+ 1528/ 761 :                            ; jump to # operator
+ 1529/ 761 : 74 57                      HASHFN:		BRA		HASHF0			; forward to HEX number interpreter
+ 1530/ 763 :                            
+ 1531/ 763 :                            ;------------------------------------------------------------------------------
+ 1532/ 763 :                            ; MOD function
+ 1533/ 763 : 20 AB 07                   MODFN:		JSR		ARGTWO			; get two arguments
+ 1534/ 766 : 12                         			CALL	2				; SAVOP: 1st arg=EA, 2nd=TMPF6
+ 1535/ 767 : 09                         MODFN1:		LD		T, EA			; T = 1st arg
+ 1536/ 768 : 85 F6                      			LD		EA, TMPF6		; EA = 2nd arg
+ 1537/ 76A : 8D FE                      			ST		EA, TMPFE		; save in temp
+ 1538/ 76C : 0B                         			LD		EA, T			; save 1nd arg in TMPFC
+ 1539/ 76D : 8D FC                      			ST		EA, TMPFC
+ 1540/ 76F : 20 0C 08                   			JSR		DIVOP			; divide EA / TMPF6
+ 1541/ 772 : 8D F6                      			ST		EA, TMPF6		; quotient into TMPF6
+ 1542/ 774 : 85 FE                      			LD		EA, TMPFE		; multiply with 2nd arg
+ 1543/ 776 : 20 F4 07                   			JSR		MULTOP			; i.e. EA div F6 * F6
+ 1544/ 779 : 1A                         			CALL	10				; NEGATE, i.e. -(EA div F6 * F6)
+ 1545/ 77A : B5 FC                      			ADD		EA, TMPFC		; subtract from 1st: EA - (EA div F6 * F6)
+ 1546/ 77C : 14                         			CALL	4				; APUSH on stack
+ 1547/ 77D : 5C                         			RET
+ 1548/ 77E :                            
+ 1549/ 77E :                            ;------------------------------------------------------------------------------
+ 1550/ 77E :                            ; RND function
+ 1551/ 77E : 20 AB 07                   RNDFN:		JSR		ARGTWO			; get two arguments on stack
+ 1552/ 781 : A5 F4                      			LD		T, RNDNUM		; get random number
+ 1553/ 783 : 84 85 04                   			LD		EA, =0x0485		; multiply with 1157
+ 1554/ 786 : 2C                         			MPY		EA, T
+ 1555/ 787 : 0B                         			LD		EA, T			; use only low 16 bits
+ 1556/ 788 : B4 19 36                   			ADD		EA, =0x3619		; add 13849
+ 1557/ 78B : 8D F4                      			ST		EA, RNDNUM		; discard overflow and save as new random value
+ 1558/ 78D : 15                         			CALL	5				; APULL second arg
+ 1559/ 78E : B5 E8                      			ADD		EA, ONE			; add one
+ 1560/ 790 : BB FE                      			SUB		EA, -2, P3		; subtract 1st arg
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 27 - 2024年05月21日 11時24分42秒
+
+
+ 1561/ 792 : 8D F6                      			ST		EA, TMPF6		; save as TMPF6
+ 1562/ 794 : 85 F4                      			LD		EA, RNDNUM		; get random value
+ 1563/ 796 : 01                         			XCH		A, E			; make random number positive
+ 1564/ 797 : D4 7F                      			AND		A, =0x7f
+ 1565/ 799 : 01                         			XCH		A, E
+ 1566/ 79A : 20 66 07                   			JSR		MODFN1			; MOD(random, (2nd-1st+1))
+ 1567/ 79D : 15                         			CALL	5				; APULL get result
+ 1568/ 79E : B3 FE                      			ADD		EA, -2, P3		; add 1st arg
+ 1569/ 7A0 : 8B FE                      			ST		EA, -2, P3		; store inplace on stack
+ 1570/ 7A2 : 5C                         			RET
+ 1571/ 7A3 :                            
+ 1572/ 7A3 :                            ;------------------------------------------------------------------------------
+ 1573/ 7A3 :                            ; get a single function argument
+ 1574/ 7A3 : 1C                         ARGONE:		CALL	12				; EXPECT opening paren
+ 1575/ 7A4 : 28                         			DB		'('
+ 1576/ 7A5 : 13                         			DB		0x13			; if not found, goto SNERR4
+ 1577/ 7A6 : 10                         			CALL	0				; RELEXP expression
+ 1578/ 7A7 : 1C                         			CALL	12				; EXPECT closing paren
+ 1579/ 7A8 : 29                         			DB		')'
+ 1580/ 7A9 : 0F                         			DB		0x0f			; if not found, goto SNERR4
+ 1581/ 7AA : 15                         			CALL	5				; APULL argument into EA
+ 1582/ 7AB : 5C                         			RET
+ 1583/ 7AC :                            
+ 1584/ 7AC :                            ;------------------------------------------------------------------------------
+ 1585/ 7AC :                            ; get a double function arg
+ 1586/ 7AC : 1C                         ARGTWO:		CALL	12				; EXPECT opening paren
+ 1587/ 7AD : 28                         			DB		'('
+ 1588/ 7AE : 0A                         			DB		0x0a			; if not found goto SNERR4
+ 1589/ 7AF : 10                         			CALL	0				; RELEXP get first arg on stack
+ 1590/ 7B0 : 1C                         			CALL	12				; EXPECT a comma
+ 1591/ 7B1 : 2C                         			DB		','
+ 1592/ 7B2 : 06                         			DB		0x06			; if not found, goto SNERR4
+ 1593/ 7B3 : 10                         			CALL	0				; RELEXP get 2nd arg on stack
+ 1594/ 7B4 : 1C                         			CALL	12				; EXPECT closing paren
+ 1595/ 7B5 : 29                         			DB		')'
+ 1596/ 7B6 : 02                         			DB		0x02			; if not found, goto SNERR4
+ 1597/ 7B7 : 5C                         			RET						; leaves 2 args on stack
+ 1598/ 7B8 :                            
+ 1599/ 7B8 : 1F                         SNERR4:		CALL	15				; ERROR
+ 1600/ 7B9 : 04                         			DB		4				; 4 (syntax error)
+ 1601/ 7BA :                            
+ 1602/ 7BA :                            ;------------------------------------------------------------------------------
+ 1603/ 7BA :                            ; # operator
+ 1604/ 7BA :                            ; handle hexadecimal constants
+ 1605/ 7BA : 85 EA                      HASHF0:		LD		EA, ZERO		; initialize temporary
+ 1606/ 7BC : 8D F6                      			ST		EA, TMPF6
+ 1607/ 7BE : 09                         			LD		T, EA			; also clear T (collects value)
+ 1608/ 7BF : C6 01                      			LD		A, @1, P2		; get first digit
+ 1609/ 7C1 : 2D 02                      			BND		HASHF1, PC		; if not digit, skip
+ 1610/ 7C3 : 74 1A                      			BRA		HASHF5			; handle decimal digit (0..9)
+ 1611/ 7C5 : 20 EA 07                   HASHF1:		JSR		CVTHEX			; may be 'A'..'F', convert to 0..5
+ 1612/ 7C8 : 64 13                      			BP		HASHF4			; if negative, was no hex letter
+ 1613/ 7CA : 1F                         			CALL	15				; ERROR
+ 1614/ 7CB : 05                         			DB		5				; 5 (value error)
+ 1615/ 7CC :                            
+ 1616/ 7CC : C6 01                      HASHF2:		LD		A, @1, P2		; get next char from number
+ 1617/ 7CE : 2D 02                      			BND		HASHF3, PC		; if not digit, skip
+ 1618/ 7D0 : 74 0D                      			BRA		HASHF5			; insert next digit
+ 1619/ 7D2 : 20 EA 07                   HASHF3:		JSR		CVTHEX			; may by 'A'..'F', convert to 0..5
+ 1620/ 7D5 : 64 06                      			BP		HASHF4			; if a letter, insert it
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 28 - 2024年05月21日 11時24分42秒
+
+
+ 1621/ 7D7 : 0B                         			LD		EA, T			; done with hex number, put value into EA
+ 1622/ 7D8 : 14                         			CALL	4				; APUSH on stack
+ 1623/ 7D9 : C6 FF                      			LD		A, @-1, P2		; re-get the last non-hex char
+ 1624/ 7DB : 19                         			CALL	9				; GETCHR
+ 1625/ 7DC : 5C                         			RET						; done
+ 1626/ 7DD : F4 0A                      HASHF4:		ADD		A, =0x0a		; cvt hex 'letter' into range 10..15
+ 1627/ 7DF : CD F6                      HASHF5:		ST		A, TMPF6		; store digit temporary (0..15)
+ 1628/ 7E1 : 0B                         			LD		EA, T			; shift 4 bit left
+ 1629/ 7E2 : 0F                         			SL		EA
+ 1630/ 7E3 : 0F                         			SL		EA
+ 1631/ 7E4 : 0F                         			SL		EA
+ 1632/ 7E5 : 0F                         			SL		EA
+ 1633/ 7E6 : B5 F6                      			ADD		EA, TMPF6		; add digit
+ 1634/ 7E8 : 09                         			LD		T, EA			; put back into T
+ 1635/ 7E9 : 74 E1                      			BRA		HASHF2			; loop
+ 1636/ 7EB :                            
+ 1637/ 7EB :                            ;------------------------------------------------------------------------------
+ 1638/ 7EB :                            ; convert an ASCII hex digit to 0x00...0x05
+ 1639/ 7EB : FC 47                      CVTHEX:		SUB		A, =0x47		; subtract 'G'
+ 1640/ 7ED : 64 03                      			BP		CVTHE1			; is >= 'G', yes, return -1
+ 1641/ 7EF : F4 06                      			ADD		A, =0x06		; adjust into range 0..5 if 'A'..'F'
+ 1642/ 7F1 : 5C                         			RET						; still negative, if < 'A'
+ 1643/ 7F2 : C4 FF                      CVTHE1:		LD		A, =0xff		; return negative result
+ 1644/ 7F4 : 5C                         			RET
+ 1645/ 7F5 :                            
+ 1646/ 7F5 :                            ;------------------------------------------------------------------------------
+ 1647/ 7F5 :                            ; Multiply EA * TMPF6 -> EA
+ 1648/ 7F5 : 20 1E 08                   MULTOP:		JSR		GETSGN			; make operands positive, and save result sign in FB
+ 1649/ 7F8 : A5 F6                      			LD		T, TMPF6		; compute EA * F6
+ 1650/ 7FA : 2C                         			MPY		EA, T
+ 1651/ 7FB : 8D C0                      			ST		EA, MULOV		; save higher result as overflow
+ 1652/ 7FD : C5 FB                      MULTO1:		LD		A, TMPFB		; get resulting sign
+ 1653/ 7FF : 64 0A                      			BP		NEGAT1			; if positive, return result unchanged
+ 1654/ 801 : 0B                         			LD		EA, T    		; otherwise put result in EA
+ 1655/ 802 :                            									; and fall through into NEGATE
+ 1656/ 802 :                            
+ 1657/ 802 :                            ;--------------------------------------------------------------------------------------------------
+ 1658/ 802 :                            ; negate number in EA (call 10)
+ 1659/ 802 : E4 FF                      NEGATE:		XOR		A, =0xff		; 1's complement low byte
+ 1660/ 804 : 01                         			XCH		A, E			; swap
+ 1661/ 805 : E4 FF                      			XOR		A, =0xff		; 1's complement high byte
+ 1662/ 807 : 01                         			XCH		A, E    		; swap back
+ 1663/ 808 : B5 E8                      			ADD		EA, ONE			; add ONE (2's complement)
+ 1664/ 80A : 5C                         			RET
+ 1665/ 80B :                            
+ 1666/ 80B : 0B                         NEGAT1:		LD		EA, T			; return positive result
+ 1667/ 80C : 5C                         			RET
+ 1668/ 80D :                            
+ 1669/ 80D :                            ;------------------------------------------------------------------------------
+ 1670/ 80D :                            ; divide EA / TMPF6 -> EA
+ 1671/ 80D : 20 1E 08                   DIVOP:		JSR		GETSGN			; make operands positive, save result sign in FB
+ 1672/ 810 : 09                         			LD		T, EA			; 1st arg in T
+ 1673/ 811 : 85 F6                      			LD		EA, TMPF6		; check 2nd arg
+ 1674/ 813 : 58                         			OR		A, E			; is it zero?
+ 1675/ 814 : 6C 07                      			BZ		DV0ERR			; yes, division by zero error
+ 1676/ 816 : 0B                         			LD		EA, T			; EA = 1st arg
+ 1677/ 817 : A5 F6                      			LD		T, TMPF6		; T = 2nd arg
+ 1678/ 819 : 0D                         			DIV		EA, T			; divide
+ 1679/ 81A : 09                         			LD		T, EA			; store quotient into T
+ 1680/ 81B : 74 E0                      			BRA		MULTO1			; adjust result sign
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 29 - 2024年05月21日 11時24分42秒
+
+
+ 1681/ 81D :                            
+ 1682/ 81D : 1F                         DV0ERR:		CALL	15				; ERROR    
+ 1683/ 81E : 0C                         			DB		0x0c			; 12 (div by zero)
+ 1684/ 81F :                            
+ 1685/ 81F :                            ;------------------------------------------------------------------------------
+ 1686/ 81F :                            ; make operands of Mul/Div positive, and store result sign in TMPFB
+ 1687/ 81F : 09                         GETSGN:		LD		T, EA			; 1st arg into T
+ 1688/ 820 : C5 F7                      			LD		A, TMPF6+1		; get sign of 2nd arg
+ 1689/ 822 : CD FB                      			ST		A, TMPFB		; store in FB
+ 1690/ 824 : 64 05                      			BP		GETSG1			; was positive, skip
+ 1691/ 826 : 85 F6                      			LD		EA, TMPF6		; negate 2nd arg
+ 1692/ 828 : 1A                         			CALL	10				; NEGATE
+ 1693/ 829 : 8D F6                      			ST		EA, TMPF6		; store it back
+ 1694/ 82B : 0B                         GETSG1:		LD		EA, T			; get 1st arg
+ 1695/ 82C : 40                         			LD		A, E			; get sign
+ 1696/ 82D : E5 FB                      			XOR		A, TMPFB		; exor with sign of 2nd
+ 1697/ 82F : CD FB                      			ST		A, TMPFB		; save as resulting sign
+ 1698/ 831 : 0B                         			LD		EA, T			; get 1st arg
+ 1699/ 832 : 01                         			XCH		A, E			; get sign
+ 1700/ 833 : 64 03                      			BP		GETSG2			; was positive, restore and exit
+ 1701/ 835 : 01                         			XCH		A, E			; otherwise negate 1nd arg 
+ 1702/ 836 : 1A                         			CALL	10				; NEGATE
+ 1703/ 837 : 5C                         			RET			
+ 1704/ 838 : 01                         GETSG2:		XCH		A, E			; return 1st arg in EA
+ 1705/ 839 : 5C                         			RET
+ 1706/ 83A :                            
+ 1707/ 83A :                            ;----------------------------------------------------------------------------------------------
+ 1708/ 83A :                            ; push a value in EA onto AESTK, pointed to by P3
+ 1709/ 83A : 08                         APUSH:		PUSH	EA				; save value
+ 1710/ 83B : 33                         			LD		EA, P3			; get P3 value
+ 1711/ 83C : BD CA                      			SUB		EA, SBRSTK		; subtract end of AESTK (= start of SBRSTK)
+ 1712/ 83E : 01                         			XCH		A, E			; get high byte
+ 1713/ 83F : 64 04                      			BP		APUSH1			; negative?, yes error
+ 1714/ 841 : 3A                         			POP		EA				; restore value
+ 1715/ 842 : 8F 02                      			ST		EA, @2, P3		; store in stack, pointed to by P3, autoincrement
+ 1716/ 844 : 5C                         			RET
+ 1717/ 845 : 1F                         APUSH1:		CALL 	15				; error 9 (stack overflow)
+ 1718/ 846 : 09                         			DB		9				; error code
+ 1719/ 847 :                            
+ 1720/ 847 :                            ;----------------------------------------------------------------------------------------------
+ 1721/ 847 :                            ; SAVOP		(call 2) pull last op and save into TMPF6, then pull 2nd last into EA
+ 1722/ 847 : 15                         SAVOP:		CALL	5				; APULL
+ 1723/ 848 : 8D F6                      			ST 		EA, TMPF6		; save last value
+ 1724/ 84A :                            
+ 1725/ 84A :                            ;--------------------------------------------------------------------------------------------------
+ 1726/ 84A :                            ; pull a value off AESTK pointed to by P3, return in EA (call 5)
+ 1727/ 84A : 87 FE                      APULL:		LD		EA, @-2, P3		; get value from stack, autodecrement
+ 1728/ 84C : 5C                         			RET						; return
+ 1729/ 84D :                            
+ 1730/ 84D :                            ;--------------------------------------------------------------------------------------------------
+ 1731/ 84D :                            ; get a line into BUFAD, return P2 = BUFAD
+ 1732/ 84D : 85 D0                      GETLN:		LD		EA, BUFAD		; set P2 = BUFAD
+ 1733/ 84F : 46                         			LD		P2, EA			; 
+ 1734/ 850 : C4 00                      			LD		A, =0			; clear BUFCNT
+ 1735/ 852 : CD FE                      			ST		A, TMPFE
+ 1736/ 854 : C5 C2                      			LD		A, INPMOD    	; input mode
+ 1737/ 856 : 6C 07                      			BZ		GETLN1			; if zero, do '>' prompt
+ 1738/ 858 : C4 3F                      			LD		A, =QUEST		; load '?'
+ 1739/ 85A : 17                         			CALL 	7				; PUTC
+ 1740/ 85B : C4 20                      			LD		A, =SPACE		; load space
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 30 - 2024年05月21日 11時24分42秒
+
+
+ 1741/ 85D : 74 02                      			BRA		GETLN2			; continue
+ 1742/ 85F : C4 3E                      GETLN1:		LD		A, =GTR			; load '>'
+ 1743/ 861 : 17                         GETLN2:		CALL 	7				; PUTC
+ 1744/ 862 : 20 2A 09                   GETCH:		JSR		GECO			; get char with echo in A
+ 1745/ 865 : 6C FB                      			BZ		GETCH			; if zero, ignore
+ 1746/ 867 : 48                         			LD		E, A			; save char into E
+ 1747/ 868 : E4 0A                      			XOR		A, =LF			; is it LF?
+ 1748/ 86A : 6C F6                      			BZ		GETCH			; yes, ignore
+ 1749/ 86C : E4 07                      			XOR		A, =0x07		; is it CR?		A xor (0a xor 07)
+ 1750/ 86E : 6C 3F                      			BZ		EOLN			; yes, skip
+ 1751/ 870 : E4 52                      			XOR		A, =0x52		; is it '_'?	A xor (0d xor 52)
+ 1752/ 872 : 6C 25                      			BZ		DELCH			; yes skip
+ 1753/ 874 : E4 57                      			XOR		A, =0x57		; is it 0x08?	A xor (5f xor 57)
+ 1754/ 876 : 6C 1B                      			BZ		CTRLH			; yes skip
+ 1755/ 878 : E4 1D                      			XOR		A, =0x1d		; is it 0x15?	A xor (08 xor 1d)
+ 1756/ 87A : 6C 0E                      			BZ		CTRLU			; yes skip
+ 1757/ 87C : E4 16                      			XOR		A, =0x16		; is it 0x03?	A xor (15 xor 16)
+ 1758/ 87E : 7C 23                      			BNZ		CHAR			; no, skip: no control char
+ 1759/ 880 : C4 5E                      			LD		A, =CARET		; load '^'
+ 1760/ 882 : 17                         			CALL	7				; PUTC
+ 1761/ 883 : C4 43                      			LD		A, ='C'			; load 'C'
+ 1762/ 885 : 17                         			CALL 	7				; PUTC
+ 1763/ 886 : 18                         			CALL	8				; CRLF
+ 1764/ 887 : 24 99 00                   			JMP		MAINLP			; back to interpreter
+ 1765/ 88A : C4 5E                      CTRLU:		LD		A, =CARET		; load '^'
+ 1766/ 88C : 17                         			CALL 	7				; PUTC
+ 1767/ 88D : C4 55                      			LD		A, ='U'			; load 'U'
+ 1768/ 88F : 17                         			CALL	7				; PUTC
+ 1769/ 890 : 18                         			CALL	8				; CRLF
+ 1770/ 891 : 74 BA                      			BRA		GETLN			; restart input line
+ 1771/ 893 : C4 20                      CTRLH:		LD		A, =SPACE		; load ' '
+ 1772/ 895 : 17                         			CALL	7				; PUTC
+ 1773/ 896 : C4 08                      			LD		A, =BS			; load backspace
+ 1774/ 898 : 17                         			CALL 	7				; PUTC
+ 1775/ 899 : C5 FE                      DELCH:		LD		A, TMPFE		; load buffer count
+ 1776/ 89B : 6C C5                      			BZ		GETCH			; if at beginning of line, loop
+ 1777/ 89D : 9D FE                      			DLD		A, TMPFE		; decrement buffer count
+ 1778/ 89F : C6 FF                      			LD		A, @-1, P2    	; point one buffer pos back
+ 1779/ 8A1 : 74 BF                      			BRA		GETCH			; loop 
+ 1780/ 8A3 : 40                         CHAR:		LD		A, E			; get char back
+ 1781/ 8A4 : CE 01                      			ST		A, @1, P2   	; put into buffer
+ 1782/ 8A6 : 95 FE                      			ILD		A, TMPFE		; increment buffer counter
+ 1783/ 8A8 : E4 49                      			XOR		A, =73			; limit of 72 chars reached?
+ 1784/ 8AA : 7C B6                      			BNZ		GETCH			; no get another
+ 1785/ 8AC : C4 0D                      			LD		A, =CR			; load CR
+ 1786/ 8AE : 17                         			CALL	7				; emit
+ 1787/ 8AF :                            
+ 1788/ 8AF : C4 0D                      EOLN:		LD		A, =CR			; load CR
+ 1789/ 8B1 : CE 01                      			ST		A, @1, P2		; put into buffer
+ 1790/ 8B3 : C4 0A                      			LD		A, =LF			; load LF
+ 1791/ 8B5 : 17                         			CALL	7				; PUTC
+ 1792/ 8B6 : 85 D0                      			LD		EA, BUFAD		; get BUFAD into P2
+ 1793/ 8B8 : 46                         			LD		P2, EA
+ 1794/ 8B9 : 5C                         			RET						; done
+ 1795/ 8BA :                            
+ 1796/ 8BA :                            ;--------------------------------------------------------------------------------------------------
+ 1797/ 8BA :                            ; handle Interrupt A (will only happen with external I/O, otherwise SA is in use)
+ 1798/ 8BA : 08                         INTA:		PUSH	EA				; save EA
+ 1799/ 8BB : 85 E2                      			LD		EA, INTAVC		; load vector
+ 1800/ 8BD : 74 03                      			BRA		INT1			; skip
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 31 - 2024年05月21日 11時24分42秒
+
+
+ 1801/ 8BF :                            
+ 1802/ 8BF : 08                         INTB:		PUSH	EA				; save EA
+ 1803/ 8C0 : 85 E4                      			LD		EA, INTBVC		; load vector
+ 1804/ 8C2 : 8D E0                      INT1:		ST		EA, INTVEC		; save vector
+ 1805/ 8C4 : 58                         			OR		A, E			; check if EA=0
+ 1806/ 8C5 : 6C 02                      			BZ		INT2			; yes ignore
+ 1807/ 8C7 : 3A                         			POP		EA				; restore EA
+ 1808/ 8C8 : 5C                         			RET						; exit
+ 1809/ 8C9 : 3A                         INT2:		POP		EA				; restore EA
+ 1810/ 8CA : 3B 01                      			OR		S, =0x01		; enable interrupts
+ 1811/ 8CC : 5C                         			RET						; exit
+ 1812/ 8CD :                            
+ 1813/ 8CD :                            ;--------------------------------------------------------------------------------------------------
+ 1814/ 8CD :                            ; emit error, code is in byte following CALL 15
+ 1815/ 8CD : 3A                         ERROR:		POP		EA				; get address of caller
+ 1816/ 8CE : 47                         			LD		P3, EA			; into P3
+ 1817/ 8CF : 56                         			PUSH	P2    			; save P2
+ 1818/ 8D0 : 26 0C 09                   			LD		P2, =ERRMSG		; address of error message
+ 1819/ 8D3 : 1E                         			CALL 	14				; PRTLN
+ 1820/ 8D4 : 85 EA                      			LD		EA, ZERO		; clear EA
+ 1821/ 8D6 : C3 01                      			LD		A, 1, P3    	; get error number from code
+ 1822/ 8D8 : 47                         			LD		P3, EA			; into P3
+ 1823/ 8D9 : 85 C8                      			LD 		EA, AESTK		; get AESTK    
+ 1824/ 8DB : 4F                         			XCH		EA, P3			; put into P3, EA is error code
+ 1825/ 8DC : 14                         			CALL	4				; APUSH
+ 1826/ 8DD : 20 FB 04                   			JSR		PRNUM			; print number
+ 1827/ 8E0 : C5 C2                      			LD		A, INPMOD		; get input mode
+ 1828/ 8E2 : 6C 07                      			BZ		ERRO1			; was in interactive mode, skip
+ 1829/ 8E4 : E4 03                      			XOR		A, =03    		; was 0x03?
+ 1830/ 8E6 : 6C 0C                      			BZ 		ERRO2			; yes, skip
+ 1831/ 8E8 : 20 01 09                   			JSR		PRTAT			; otherwise: print AT line#
+ 1832/ 8EB : 18                         ERRO1:		CALL 	8				; CRLF
+ 1833/ 8EC : 5E                         			POP		P2				; restore P2
+ 1834/ 8ED : C4 00                      			LD		A, =0			; set interactive mode
+ 1835/ 8EF : CD C2                      			ST		A, INPMOD
+ 1836/ 8F1 : 24 99 00                   			JMP		MAINLP    		; back to main loop
+ 1837/ 8F4 : 18                         ERRO2:		CALL	8				; CRLF
+ 1838/ 8F5 : 22 18 09                   			PLI		P2, =RETMSG		; load retype msg
+ 1839/ 8F8 : 1E                         			CALL 	14				; PRTLN
+ 1840/ 8F9 : 5E                         			POP		P2				; restore P2
+ 1841/ 8FA : 18                         			CALL	8				; CRLF
+ 1842/ 8FB : 5E                         			POP		P2    			; restore P2 from call
+ 1843/ 8FC : 85 F2                      			LD		EA, TMPF2		; restore buffer ptr from input save location
+ 1844/ 8FE : 46                         			LD		P2, EA			;
+ 1845/ 8FF : 24 D0 03                   			JMP		INPUT1			; back into INPUT
+ 1846/ 902 :                            
+ 1847/ 902 :                            ;--------------------------------------------------------------------------------------------------
+ 1848/ 902 :                            ; print "AT line#"
+ 1849/ 902 : 26 16 09                   PRTAT:		LD		P2, =ATMSG		; at msg
+ 1850/ 905 : 1E                         			CALL 	14				; PRTLN
+ 1851/ 906 : 85 C3                      			LD		EA, CURRNT		; current line
+ 1852/ 908 : 14                         			CALL	4				; APUSH
+ 1853/ 909 : 24 FB 04                   			JMP		PRNUM    		; print line number
+ 1854/ 90C :                            
+ 1855/ 90C : 45 52 52 4F D2             ERRMSG:		DB		'ERRO', 'R'+0x80
+ 1856/ 911 :                            ;;;STOPMSG:	DB		'STO', 'P'+0x80  BUG???
+ 1857/ 911 : 53 54 4F 50 A0             STOPMSG:	DB		'STOP', ' '+0x80
+ 1858/ 916 : 41 D4                      ATMSG:		DB		'A', 'T'+0x80
+ 1859/ 918 : 52 45 54 59 50 C5          RETMSG:		DB		'RETYP', 'E'+0x80
+ 1860/ 91E :                            
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 32 - 2024年05月21日 11時24分42秒
+
+
+ 1861/ 91E :                            ;--------------------------------------------------------------------------------------------------
+ 1862/ 91E :                            ; check BREAK from serial, return to mainloop if pressed
+ 1863/ 91E :                            ; requires BRKFLG=0
+ 1864/ 91E : C5 E6                      CHKBRK:		LD		A, BRKFLG		; get break flag
+ 1865/ 920 : 7C 05                      			BNZ		CHKBR1			; if 1 then not enabled
+ 1866/ 922 : 06                         			LD		A, S			; get status
+ 1867/ 923 : D4 10                      			AND		A, =0x10		; check SA
+ 1868/ 925 : 6C 01                      			BZ		CHKBR2			; if low, return to main loop
+ 1869/ 927 : 5C                         CHKBR1:		RET						; otherwise exit
+ 1870/ 928 : 24 99 00                   CHKBR2:		JMP		MAINLP
+ 1871/ 92B :                            
+ 1872/ 92B :                            ;--------------------------------------------------------------------------------------------------
+ 1873/ 92B :                            ; wait for and read a character from input line, return it in A
+ 1874/ 92B : 22 00 FD                   GECO:		PLI 	P2, =BAUDFLG	; get baudrate flags
+ 1875/ 92E : C2 00                      			LD 		A, 0, P2		; read bits, here: bit 7
+ 1876/ 930 : 64 43                      			BP		EXGET			; bit 7=0: call external routine
+ 1877/ 932 : 5E                         			POP		P2				; restore P2
+ 1878/ 933 : 06                         			LD		A, S			; get status
+ 1879/ 934 : 0A                         			PUSH	A				; save it
+ 1880/ 935 : 39 FE                      			AND		S, =0xfe		; disable IE
+ 1881/ 937 : C4 09                      			LD		A, =9
+ 1882/ 939 : CD FF                      			ST		A, TMPFE+1		; store counter for bits
+ 1883/ 93B : 3B 04                      			OR		S, =0x04		; set F2
+ 1884/ 93D : 06                         GECO1:		LD		A, S			; read status
+ 1885/ 93E : D4 10                      			AND		A, =0x10		; select bit SA
+ 1886/ 940 : 7C FB                      			BNZ		GECO1			; if 1 loop (no start bit)
+ 1887/ 942 : 20 CD 09                   			JSR		DELAYI			; delay a half bit
+ 1888/ 945 : 06                         			LD		A, S			; sample status
+ 1889/ 946 : D4 10                      			AND		A, =0x10		; select bit SA
+ 1890/ 948 : 7C F3                      			BNZ		GECO1			; still 1, no start bit yet, loop
+ 1891/ 94A : 39 FB                      			AND		S, =0xfb		; clear F2
+ 1892/ 94C : 3B 02                      			OR		S, =0x02   		; set F1 (echo bit inverted)
+ 1893/ 94E : 20 D5 09                   GECO2:		JSR		DELAYI2			; do a full bit delay
+ 1894/ 951 : 00                         			NOP						; wast some time
+ 1895/ 952 : 00                         			NOP
+ 1896/ 953 : 9D FF                      			DLD		A, TMPFE+1		; decrement bit count
+ 1897/ 955 : 6C 15                      			BZ		GECO3			; if done, exit
+ 1898/ 957 : 06                         			LD		A, S			; get status
+ 1899/ 958 : D4 10                      			AND		A, =0x10    	; select bit SA
+ 1900/ 95A : 3C                         			SR		A				; put bit into position 02 (for F1)
+ 1901/ 95B : 3C                         			SR		A
+ 1902/ 95C : 3C                         			SR		A
+ 1903/ 95D : CD F6                      			ST		A, TMPF6		; store into temporary 
+ 1904/ 95F : 3C                         			SR		A				; put bit into position 01
+ 1905/ 960 : 3F                         			RRL		A				; rotate into LINK
+ 1906/ 961 : 01                         			XCH		A, E  			; collect bit into E
+ 1907/ 962 : 3D                         			SRL		A				; by rotating LINK into E
+ 1908/ 963 : 01                         			XCH		A, E
+ 1909/ 964 : 06                         			LD		A, S			; get status
+ 1910/ 965 : DC 02                      			OR		A, =0x02		; preload bit 2 with 1
+ 1911/ 967 : E5 F6                      			XOR		A, TMPF6		; map in bit for F1 echo
+ 1912/ 969 : 07                         			LD		S, A			; put out bit
+ 1913/ 96A : 74 E2                      			BRA		GECO2			; loop
+ 1914/ 96C : 38                         GECO3:		POP		A				; restore old status
+ 1915/ 96D : D4 F9                      			AND		A, =0xf9		; clear F1, F2 (stop bits, reader relay)
+ 1916/ 96F : 07                         			LD		S, A			; emit bits
+ 1917/ 970 : 40                         			LD		A, E			; get byte received
+ 1918/ 971 : D4 7F                      			AND		A, =0x7f		; 7 bits only
+ 1919/ 973 : 48                         			LD		E, A			; save into E
+ 1920/ 974 : 5C                         			RET						; exit
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 33 - 2024年05月21日 11時24分42秒
+
+
+ 1921/ 975 :                            
+ 1922/ 975 :                            ;--------------------------------------------------------------------------------------------------
+ 1923/ 975 :                            ; use external GET routine
+ 1924/ 975 : 84 F5 09                   EXGET:		LD		EA, =(EXGET1-1)	; push return to caller on stack
+ 1925/ 978 : 08                         			PUSH	EA
+ 1926/ 979 : 82 01                      			LD		EA, 1, P2		; get address of routine 0xFD01
+ 1927/ 97B : BD E8                      			SUB		EA, ONE   		; subtract 1
+ 1928/ 97D : 44                         			LD		PC, EA			; jump indirect into routine
+ 1929/ 97E :                            
+ 1930/ 97E :                            ;--------------------------------------------------------------------------------------------------
+ 1931/ 97E :                            ; emit a CRLF (call 8)
+ 1932/ 97E : C4 0D                      CRLF:		LD		A, =CR			; load CR
+ 1933/ 980 : 17                         			CALL	7				; PUTC
+ 1934/ 981 : C4 0A                      			LD		A, =LF			; load LF
+ 1935/ 983 :                            									; fall thru into PUTC
+ 1936/ 983 :                            ;--------------------------------------------------------------------------------------------------
+ 1937/ 983 :                            ; emit the character in A (call 7)						
+ 1938/ 983 : 0A                         PUTC:		PUSH 	A				; save A
+ 1939/ 984 : 22 00 FD                   			PLI 	P2, =BAUDFLG	; push P2 and load baud rate bits
+ 1940/ 987 : C2 00                      			LD		A, 0, P2		; get baud rate flag, here: bit 7
+ 1941/ 989 : 64 32                      			BP		EXPUTC   		; bit 7=0: goto external routines
+ 1942/ 98B : 5E                         			POP		P2				; restore P2
+ 1943/ 98C : 38                         			POP		A  		  		; restore char
+ 1944/ 98D : 0A                         			PUSH	A				; save it again
+ 1945/ 98E : 0E                         			SL 		A  		  		; shift left (7 bit), so low bit is in pos 2
+ 1946/ 98F :                            									; note: 8th bit is ignored, and first bit to emit is now
+ 1947/ 98F :                            									; in the correct position for flag F1
+ 1948/ 98F : 01                         			XCH		A, E    		; save current bits in E
+ 1949/ 990 : 06                         			LD		A, S			; get status
+ 1950/ 991 : 0A                         			PUSH	A				; save old state
+ 1951/ 992 : 39 FA                      			AND		S, =0xfa		; clear F2, IE
+ 1952/ 994 : 20 D3 09                   			JSR		DELAYO			; do some delay (ensure two stop bits)
+ 1953/ 997 : 20 D3 09                   			JSR 	DELAYO			;
+ 1954/ 99A : 3B 02                      			OR		S, =0x02		; set F1 (start bit)
+ 1955/ 99C :                            									; note inverse logic: start bit is 1
+ 1956/ 99C : C4 09                      			LD		A, =9			; set counter for 9 bits
+ 1957/ 99E : CD FB                      			ST		A, TMPFB		
+ 1958/ 9A0 : 20 D3 09                   PUTC1:		JSR		DELAYO			; wait a bit time
+ 1959/ 9A3 : 9D FB                      			DLD		A, TMPFB		; decrement bit count
+ 1960/ 9A5 : 6C 10                      			BZ		PUTC2			; is it zero?, yes skip
+ 1961/ 9A7 : 40                         			LD		A, E    		; get byte to emit
+ 1962/ 9A8 : D4 02                      			AND		A, =0x02		; extract bit to transfer
+ 1963/ 9AA : CD FF                      			ST		A, TMPFE+1		; save bit temporary
+ 1964/ 9AC : 40                         			LD		A, E			; get byte to emit
+ 1965/ 9AD : 3C                         			SR		A    			; advance to next bit
+ 1966/ 9AE : 48                         			LD		E, A			; store back
+ 1967/ 9AF : 06                         			LD		A, S			; get status
+ 1968/ 9B0 : DC 02                      			OR		A, =0x02    	; preload bit 2
+ 1969/ 9B2 : E5 FF                      			XOR		A, TMPFE+1		; map in inverted data bit
+ 1970/ 9B4 : 07                         			LD		S, A    		; put out bit at F1
+ 1971/ 9B5 : 74 E9                      			BRA		PUTC1			; loop bits
+ 1972/ 9B7 : 38                         PUTC2:		POP		A				; restore saved status
+ 1973/ 9B8 : D4 F9                      			AND		A, =0xf9		; clear F2, F1 (stop bit)
+ 1974/ 9BA : 07                         			LD		S, A			; put out stop bit
+ 1975/ 9BB : 38                         			POP		A				; restore char to emit
+ 1976/ 9BC : 5C                         			RET						; exit
+ 1977/ 9BD :                            ;--------------------------------------------------------------------------------------------------
+ 1978/ 9BD :                            ; call external routine for PUTC
+ 1979/ 9BD : 82 03                      EXPUTC:		LD		EA, 3, P2		; get address at 0xFD03
+ 1980/ 9BF : 46                         			LD		P2, EA    		; into P2
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 34 - 2024年05月21日 11時24分42秒
+
+
+ 1981/ 9C0 : 84 C7 09                   			LD		EA, =(EXPUT1-1)	; address of return 
+ 1982/ 9C3 : 08                         			PUSH	EA 				; save on stack (will be called on return)
+ 1983/ 9C4 : C1 04                      			LD		A, 4, SP		; get char to emit from stack
+ 1984/ 9C6 : 76 FF                      			BRA		-1, P2			; jump to external routine on stack
+ 1985/ 9C8 : 5E                         EXPUT1:		POP		P2    			; restore original P2
+ 1986/ 9C9 : 38                         			POP A					; restore char to emit
+ 1987/ 9CA : 5C                         			RET						; return to caller
+ 1988/ 9CB :                            
+ 1989/ 9CB :                            ;--------------------------------------------------------------------------------------------------
+ 1990/ 9CB :                            ; some delay
+ 1991/ 9CB : 08                         DELAYC:		PUSH	EA				; save EA
+ 1992/ 9CC : 74 0B                      			BRA		DELAY1			; skip into delay routine
+ 1993/ 9CE :                            
+ 1994/ 9CE :                            ;--------------------------------------------------------------------------------------------------
+ 1995/ 9CE :                            ; (half) delay for input
+ 1996/ 9CE : 08                         DELAYI:		PUSH	EA				; save EA
+ 1997/ 9CF : 85 EC                      			LD		EA, DLYTIM		; get delay time
+ 1998/ 9D1 : 0C                         			SR		EA				; div /2
+ 1999/ 9D2 : 74 05                      			BRA		DELAY1			; skip into delay rountine
+ 2000/ 9D4 :                            ;--------------------------------------------------------------------------------------------------
+ 2001/ 9D4 :                            ; delay for output
+ 2002/ 9D4 : 01                         DELAYO:		XCH		A, E			; waste some time
+ 2003/ 9D5 : 01                         			XCH		A, E    		; waste some time
+ 2004/ 9D6 : 08                         DELAYI2:	PUSH	EA				; save EA
+ 2005/ 9D7 : 85 EC                      			LD		EA, DLYTIM		; get delay constant
+ 2006/ 9D9 : BD E8                      DELAY1:		SUB		EA, ONE			; subtract 1
+ 2007/ 9DB : 7C FC                      			BNZ		DELAY1			; loop until xx00
+ 2008/ 9DD : 01                         			XCH		A, E			; is also 00xx?
+ 2009/ 9DE : 6C 03                      			BZ		DELAY2			; yes exit
+ 2010/ 9E0 : 01                         			XCH		A, E			; put back high byte
+ 2011/ 9E1 : 74 F6                      			BRA		DELAY1 			; loop
+ 2012/ 9E3 : 3A                         DELAY2:		POP		EA				; restore EA
+ 2013/ 9E4 : 5C                         			RET						; exit
+ 2014/ 9E5 :                            
+ 2015/ 9E5 :                            ;--------------------------------------------------------------------------------------------------
+ 2016/ 9E5 :                            	; initialize the variable for baud rate
+ 2017/ 9E5 : 22 00 FD                   INITBD:		PLI 	P2, =BAUDFLG	; push P2 and load it with baudrate address
+ 2018/ 9E8 : 85 EA                      			LD		EA, ZERO		; clear EA
+ 2019/ 9EA : C2 00                      			LD		A, 0, P2		; get baud flags
+ 2020/ 9EC : D4 06                      			AND		A, =0x06    	; mask out bits 1/2
+ 2021/ 9EE : B4 F8 09                   			ADD		EA, =DLYTAB		; add base of DLY constants
+ 2022/ 9F1 : 46                         			LD		P2, EA   		; into P2
+ 2023/ 9F2 : 82 00                      			LD		EA, 0, P2		; get constant
+ 2024/ 9F4 : 8D EC                      			ST		EA, DLYTIM    	; store it in DLY constant word
+ 2025/ 9F6 : 5E                         EXGET1:		POP		P2				; restore P2
+ 2026/ 9F7 : 5C                         			RET						; exit
+ 2027/ 9F8 : 04 00                      DLYTAB:		DW		0x0004			; delay for 4800bd
+ 2028/ 9FA : 2E 00                      			DW		0x002e			; for 1200 bd
+ 2029/ 9FC : D5 00                      			DW		0x00d5 		; for 300 bd
+ 2030/ 9FE : 52 02                      			DW		0x0252			; for 110 bd
+ 2031/ A00 :                            
+ 2032/ A00 :                            			END
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 35 - 2024年05月21日 11時24分42秒
+
+
+  Symbol Table (* = unused):
+  --------------------------
+
+ AESTK :                       FFC8 - |  APULL :                        84A C |
+ APUSH :                        83A C |  APUSH1 :                       845 C |
+*ARCHITECTURE :                                      "x86_64-unknown-linux" - |
+ ARGONE :                       7A3 C |  ARGTWO :                       7AC C |
+*ASSIG1 :                       479 C |  ASSIGN :                       45B C |
+*ATLH :                         46A C |  ATMSG :                        916 C |
+*ATRH :                         731 C |  BAUDFLG :                     FD00 - |
+ BMOVE :                        15D C |  BMOVE1 :                       16D C |
+ BRKFLG :                      FFE6 - |  BS :                             8 - |
+ BUFAD :                       FFD0 - |  CARET :                        '^' - |
+*CASESENSITIVE :                  0 - |  CHAR :                         8A3 C |
+ CHKBR1 :                       927 C |  CHKBR2 :                       928 C |
+ CHKBRK :                       91E C |  CHKSBR :                       3C1 C |
+*CLEAR :                        2D4 C |  CMDT10 :                       323 C |
+ CMDT11 :                       6A4 C |  CMDT12 :                       6F6 C |
+ CMDT13 :                       6CD C |  CMDTB1 :                       198 C |
+ CMDTB2 :                       22E C |  CMDTB4 :                       451 C |
+ CMDTB5 :                       262 C |  CMDTB6 :                       1CB C |
+ CMDTB7 :                       2BF C |  CMDTB8 :                       423 C |
+ CMDTB9 :                       31D C |  CMPTO1 :                       615 C |
+ CMPTO2 :                       61C C |  CMPTO3 :                       621 C |
+ CMPTO4 :                       62F C |  CMPTO5 :                       636 C |
+ CMPTOK :                       614 C |  COLD :                           A C |
+ COLD1 :                          D C |  COLD2 :                         13 C |
+ COLD3 :                         40 C |  COLD4 :                         48 C |
+ COLD5 :                         5D C |  COLD6 :                         68 C |
+ COMPA1 :                       686 C |  COMPA2 :                       68C C |
+ COMPAR :                       67A C | *CONSTPI :        3.141592653589793 - |
+*CONT :                         1D1 C |  CONTP :                       FFEE - |
+ CR :                             D - |  CRLF :                         97E C |
+ CTRLH :                        893 C |  CTRLU :                        88A C |
+ CURRNT :                      FFC3 - |  CVTHE1 :                       7F2 C |
+ CVTHEX :                       7EB C |
+*DATE :             "2024\-027\-071\-07605\-026\-100\-12021\-026\-105\-091" - |
+*DECFN :                        753 C |  DECFN1 :                       75A C |
+ DECFN2 :                       75B C | *DELAY :                        443 C |
+ DELAY1 :                       9D9 C |  DELAY2 :                       9E3 C |
+ DELAYC :                       9CB C |  DELAYI :                       9CE C |
+ DELAYI2 :                      9D6 C |  DELAYO :                       9D4 C |
+ DELCH :                        899 C | *DIRECT :                       151 C |
+ DIVOP :                        80D C |  DLYTAB :                       9F8 C |
+ DLYTIM :                      FFEC - | *DO :                           2ED C |
+ DO1 :                          2FE C |  DOLAL1 :                       49A C |
+ DOLAL2 :                       4AA C |  DOLAL3 :                       4B1 C |
+*DOLAL4 :                       4B8 C |  DOLAL5 :                       4BB C |
+ DOLAL6 :                       4C3 C | *DOLALH :                       48B C |
+ DOPTR :                       FFDA - |  DOSTK :                       FFCC - |
+ DV0ERR :                       81D C |  ENDCM1 :                       211 C |
+*ENDCM2 :                       21D C |  ENDCM3 :                       225 C |
+ ENDCMD :                       203 C |  EOLN :                         8AF C |
+ EQERR :                        4C6 C |  ERRMSG :                       90C C |
+ ERRO1 :                        8EB C |  ERRO2 :                        8F4 C |
+ ERROR :                        8CD C |  EXEC1 :                        1FD C |
+*EXEC2 :                        254 C | *EXEC3 :                        2D0 C |
+ EXGET :                        975 C |  EXGET1 :                       9F6 C |
+ EXPECT :                       55E C |  EXPUT1 :                       9C8 C |
+ EXPUTC :                       9BD C |  EXTRAM :                      FFC6 - |
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 36 - 2024年05月21日 11時24分42秒
+
+
+*FACTO1 :                       6F1 C | *FACTO2 :                       6F2 C |
+*FACTO3 :                       71A C |  FACTOR :                       6EF C |
+*FALSE :                          0 - |  FINDL1 :                       171 C |
+ FINDL2 :                       182 C |  FINDL3 :                       187 C |
+*FINDL4 :                       18E C |  FINDLN :                       16E C |
+*FOR :                          327 C | *FOR1 :                         333 C |
+*FOR2 :                         338 C | *FOR3 :                         33B C |
+ FOR4 :                         33F C |  FOR5 :                         365 C |
+ FORPTR :                      FFDC - |  FORSTK :                      FFCE - |
+ GECO :                         92B C |  GECO1 :                        93D C |
+ GECO2 :                        94E C |  GECO3 :                        96C C |
+ GETCH :                        862 C |  GETCHR :                       54D C |
+ GETLN :                        84D C |  GETLN1 :                       85F C |
+ GETLN2 :                       861 C |  GETNXC :                       54B C |
+ GETSG1 :                       82B C |  GETSG2 :                       838 C |
+ GETSGN :                       81F C |  GETVA1 :                       579 C |
+ GETVA2 :                       586 C |  GETVA3 :                       58E C |
+ GETVA4 :                       590 C |  GETVAR :                       56D C |
+*GOCMD :                        25E C | *GOSUB :                        276 C |
+ GOSUB1 :                       277 C | *GOTO :                         26A C |
+ GOTO1 :                        26B C |  GTR :                          '>' - |
+*HAS64 :                          1 - |  HASHF0 :                       7BA C |
+ HASHF1 :                       7C5 C |  HASHF2 :                       7CC C |
+ HASHF3 :                       7D2 C |  HASHF4 :                       7DD C |
+ HASHF5 :                       7DF C | *HASHFN :                       761 C |
+*IFCMD :                        2A8 C | *INCFN :                        74A C |
+ INITA1 :                       5C6 C |  INITA2 :                       600 C |
+ INITAL :                       5C1 C |  INITBD :                       9E5 C |
+ INPMOD :                      FFC2 - | *INPUT :                        43E C |
+ INPUT0 :                       3CA C |  INPUT1 :                       3D1 C |
+ INPUT2 :                       3DD C | *INPUT3 :                       3FD C |
+ INPUT4 :                       40C C | *INPUT5 :                       41A C |
+ INT1 :                         8C2 C |  INT2 :                         8C9 C |
+ INTA :                         8BA C |  INTAVC :                      FFE2 - |
+ INTB :                         8BF C |  INTBVC :                      FFE4 - |
+ INTVEC :                      FFE0 - | *LET :                          258 C |
+ LF :                             A - | *LINK :                         2B1 C |
+*LIST :                         1B0 C | *LIST0 :                        1B4 C |
+ LIST1 :                        1B7 C |  LIST2 :                        1BA C |
+*LIST3 :                        1C7 C | *LISTON :                         1 - |
+*LPAREN :                       72A C | *MACEXP :                         7 - |
+ MAIN :                          91 C |  MAIN1 :                        1C8 C |
+*MAINL1 :                        B8 C |  MAINL2 :                        B9 C |
+ MAINL3 :                        D8 C |  MAINL4 :                        FB C |
+ MAINL5 :                       137 C |  MAINL6 :                       147 C |
+ MAINL7 :                       14E C |  MAINLP :                        9A C |
+ MDTER0 :                       6C9 C | *MDTER1 :                       6D6 C |
+ MDTER2 :                       6DB C | *MDTER3 :                       6DE C |
+*MDTER4 :                       6E5 C |  MDTERM :                       6C8 C |
+*MODFN :                        763 C |  MODFN1 :                       767 C |
+*MOMCPU :                      8070 - | *MOMCPUNAME :                "8070" - |
+ MULOV :                       FFC0 - |  MULTO1 :                       7FD C |
+ MULTOP :                       7F5 C | *NAK :                           15 - |
+ NEGAT1 :                       80B C |  NEGATE :                       802 C |
+*NESTMAX :                      100 - |  NEW :                           83 C |
+*NEW2 :                         1AB C | *NEXT :                         25B C |
+ NEXT0 :                        369 C |  NEXT1 :                        36F C |
+ NEXT2 :                        386 C |  NEXT3 :                        393 C |
+ NEXT4 :                        396 C |  NEXT5 :                        398 C |
+ NOINT :                       FFE7 - | *NOTFN :                        737 C |
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 37 - 2024年05月21日 11時24分42秒
+
+
+ NSERR :                        3C6 C | *NUMBE1 :                       59D C |
+ NUMBE11 :                      59E C |  NUMBE2 :                       5B4 C |
+ NUMBE3 :                       5B9 C |  NUMBE4 :                       5BB C |
+ NUMBER :                       595 C |  NXADD :                        3A6 C |
+ NXADD1 :                       3B8 C |  NXADD2 :                       3BB C |
+ NXERR :                        367 C |  OMERR :                        15B C |
+*ON :                           2D8 C | *ON1 :                          2DC C |
+ ON2 :                          2E8 C |  ONE :                         FFE8 - |
+ OPTBL1 :                       643 C |  PEEK :                         723 C |
+*PRINT :                        440 C |  PRINT0 :                       4CA C |
+ PRINT1 :                       4D2 C |  PRINT2 :                       4E1 C |
+*PRINT3 :                       4EC C |  PRINT4 :                       4F0 C |
+*PRINT5 :                       4F6 C | *PRINT6 :                       4FA C |
+ PRNUM :                        4FC C |  PRNUM1 :                       50A C |
+ PRNUM2 :                       50D C |  PRNUM3 :                       515 C |
+ PRNUM4 :                       531 C |  PRTAT :                        902 C |
+ PRTLN :                        53F C |  PRTLN1 :                       54A C |
+ PUTC :                         983 C |  PUTC1 :                        9A0 C |
+ PUTC2 :                        9B7 C |  QUEST :                        '?' - |
+ RAMBASE :                     1000 - | *RELAXED :                        0 - |
+*RELEQ :                        653 C |  RELEX1 :                       66F C |
+ RELEX2 :                       676 C | *RELEX3 :                       679 C |
+ RELEXP :                       63C C | *RELGE :                        667 C |
+*RELGT :                        66C C | *RELLE :                        658 C |
+*RELLT :                        662 C | *RELNE :                        65D C |
+ REMCMD :                       2A2 C |  RETERR :                       29E C |
+ RETMSG :                       918 C | *RETURN :                       28C C |
+*RNDFN :                        77E C |  RNDNUM :                      FFF4 - |
+ ROMBASE :                     8000 - |  RUN :                          1DA C |
+ RUN1 :                         1E6 C |  RUN2 :                         1EA C |
+*RUN3 :                         1ED C |  RUN4 :                         1F8 C |
+ RUNMOD :                      FFC5 - |  SAVOP :                        847 C |
+ SBRPTR :                      FFDE - |  SBRSTK :                      FFCA - |
+*SNERR :                        4C8 C | *SNERR1 :                       201 C |
+*SNERR2 :                       3A4 C | *SNERR3 :                       72F C |
+*SNERR4 :                       7B8 C |  SPACE :                        ' ' - |
+ STACK :                       FFD2 - | *STATLH :                       45F C |
+*STATRH :                       741 C | *STOP :                         44E C |
+ STOPMSG :                      911 C |  SUERR :                        3C8 C |
+ SWPBUF :                       41B C |  TERM :                         68F C |
+ TERM1 :                        697 C | *TERM2 :                        69A C |
+*TERM3 :                        69D C |  TERM4 :                        6A0 C |
+*TERM5 :                        6AC C | *TERM6 :                        6B4 C |
+*TERM7 :                        6BC C |
+*TIME :               "11\-026\-103\-12624\-027\-120\-12242\-025\-089\-110" - |
+ TMPF0 :                       FFF0 - |  TMPF2 :                       FFF2 - |
+ TMPF6 :                       FFF6 - |  TMPFB :                       FFFB - |
+ TMPFC :                       FFFC - |  TMPFE :                       FFFE - |
+ TOEOLN :                       192 C | *TOPFN :                        744 C |
+*TRUE :                           1 - |  TSTRAM :                        73 C |
+ TXTBGN :                      FFD4 - |  TXTEND :                      FFD8 - |
+ TXTUNF :                      FFD6 - |  UCERR :                        1AE C |
+*UNTIL :                        2A0 C |  UNTIL0 :                       301 C |
+ UNTIL1 :                       30B C |  UNTIL2 :                       316 C |
+*UNUSE1 :                      FFF8 - | *VERSION :                     142F - |
+ ZERO :                        FFEA - |
+
+    340 symbols
+     94 unused symbols
+
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 38 - 2024年05月21日 11時24分42秒
+
+
+ AS V1.42 Beta [Bld 269] - Source File nibl3.asm - Page 39 - 2024年05月21日 11時24分42秒
+
+
+  Code Pages:
+  ----------
+
+STANDARD (0 changed characters)
+
+1 code page
+
+0.01 seconds assembly time
+
+   2034 lines source file
+      2 passes
+      0 errors
+      0 warnings

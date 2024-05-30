@@ -47,7 +47,7 @@ TMPFE	=	0xfffe					; DW temporary, alias
 
 ; more constants
 RAMBASE	=	0x1000					; start of RAM
-ROMBASE	=	0x8000					; potential start of a ROM
+ROMBASE	=	0x1400					; potential start of a ROM (BASIC AREA)
 BAUDFLG	=	0xFD00					; address of baudrate selection bits
 
 BS		=	0x08					; back space
@@ -71,7 +71,7 @@ COLD:		LD		EA, =ROMBASE	; bottom address of ROM
 COLD1:		ST		EA, TXTBGN		; set begin of text to ROM
 			LD		EA, =RAMBASE	; set P2 to point to base of RAM
 			LD 		P2, EA			;
-COLD2:		JSR 	TSTRAM			; test for RAM at loc P2
+COLD2:		JSR 	TSTRAM1			; test for RAM at loc P2
 			BNZ 	COLD2			; not zero: no RAM, loop
 			LD 		EA, P2			; found RAM, get address
 			SUB 	EA, =1			; subtract 1 to get the current position
@@ -101,7 +101,7 @@ COLD3:		ST		EA, EXTRAM		; arrive here with xx00, store it (should be 0x1000)
 			ADD		EA, =0x0100		; add 256
 			ST		EA, STACK		; store as STACK address (should be 0x1100)
 			LD		SP, EA    		; initialize stack pointer
-COLD4:		JSR 	TSTRAM			; check RAM at current pos P2 (should be 0x1000)
+COLD4:		JSR 	TSTRAM1			; check RAM at current pos P2 (should be 0x1000)
 			BZ		COLD4			; advance until no longer RAM
 									; P2 points to last RAM+2
 			LD		A, @-2, P2		; subtract 2 from P2
@@ -109,7 +109,7 @@ COLD4:		JSR 	TSTRAM			; check RAM at current pos P2 (should be 0x1000)
 			ST		EA, TXTEND		; store at end of text (should be 0x13ff)
 			LD		EA, TXTBGN		; load begin of ROM text (0x8000)
 			LD		P2, EA    		; put into P2
-			JSR 	TSTRAM			; is there RAM?
+			JSR 	TSTRAM1			; is there RAM?
 			BZ		COLD5			; yes, skip
 			JMP		RUN				; no, this could be a ROM program, run it
 COLD5:		LD		EA, STACK		; get stack top
@@ -123,6 +123,15 @@ COLD6:		LD 		A, RUNMOD  		; get mode
 			BZ		MAINLP			; yes, skip
 			JSR		INITAL			; intialize all interpreter variables
 			BRA		MAIN			; continue
+
+ENDRAM1:
+			LD		A, =0xff		; if P2>=0x8000 then return NonZero(RAM END)
+			RET
+TSTRAM1:
+			LD		EA,P2
+			LD		A,E
+			SUB		A, =0x80
+			BP		ENDRAM1
 
 	; check RAM at loc P2; return 0 if found, nonzero if no RAM
 TSTRAM:		LD		A, @1, P2		; get value from RAM, autoincrement
@@ -1921,7 +1930,16 @@ GECO3:		POP		A				; restore old status
 
 ;--------------------------------------------------------------------------------------------------
 ; use external GET routine
-EXGET:		LD		EA, =(EXGET1-1)	; push return to caller on stack
+EXGET:
+			DB		2				; getchar(Areg) undefined instruction (I/O Hook)
+			POP		P2				; restore P2
+			RET						; exit
+
+			NOP
+			NOP
+
+
+ORG_EXGET:	LD		EA, =(EXGET1-1)	; push return to caller on stack
 			PUSH	EA
 			LD		EA, 1, P2		; get address of routine 0xFD01
 			SUB		EA, ONE   		; subtract 1
@@ -1935,7 +1953,15 @@ CRLF:		LD		A, =CR			; load CR
 									; fall thru into PUTC
 ;--------------------------------------------------------------------------------------------------
 ; emit the character in A (call 7)						
-PUTC:		PUSH 	A				; save A
+PUTC:
+			DB		3				; putchar(Areg) undefined instruction (I/O Hook)
+			RET
+
+			NOP
+			NOP
+
+ORG_PUTC:
+			PUSH 	A				; save A
 			PLI 	P2, =BAUDFLG	; push P2 and load baud rate bits
 			LD		A, 0, P2		; get baud rate flag, here: bit 7
 			BP		EXPUTC   		; bit 7=0: goto external routines
@@ -2028,6 +2054,5 @@ DLYTAB:		DW		0x0004			; delay for 4800bd
 			DW		0x002e			; for 1200 bd
 			DW		0x00d5 		; for 300 bd
 			DW		0x0252			; for 110 bd
-
 			END
 ;

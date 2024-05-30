@@ -23,8 +23,12 @@
  *	-	No undocumented instruction behaviour
  */
 extern   volatile unsigned done;
-extern   int vcount ;
+int64_t  icount   = 0;  // Instruction count
+int64_t  clocksum = 0;  // Instruction clocks
 
+//#define  MAX_ICOUNT 1000
+
+#if 0
 /* Our little I/O ROM so we don't have decode bitbanging */
 static const uint8_t iorom[] = {
 /* FD00 */	0x00,			/* external I/O */
@@ -36,38 +40,13 @@ static const uint8_t iorom[] = {
 /* FD0A */	0xCA,0xF5,		/* ST A,-0B(P2)  again FCFF */
 /* FD0C */	0x5C			/* RET */
 };
+#endif
 	
 #define RAM_END   0x8000
 
-#if 0
-void mem_write(struct ns8070 *cpu, uint16_t addr, uint8_t val)
-{
-    if (addr == 0xFCFF) {
-    	val &= 0x7F;
-		ns8070_emu_putc(val);
-    }
-    /* BASIC and spare ROM */
-    if (addr < 0x1000) {
-        return;
-	}
-    if (addr < RAM_END) {
-        cpu->rom[addr] = val;
-	}
-}
-#endif
-
 static inline uint8_t mread(struct ns8070 *cpu, uint16_t addr)
 {
-	if (addr == 0xFCFF) {
-		return ns8070_emu_getc();
-	}
-    if (addr >= 0xFD00) {
-        return cpu->rom[addr];
-	}
-	if (addr < RAM_END) {
-		return cpu->rom[addr];
-	}
-	return 0xFF;
+	return cpu->rom[addr];
 }
 
 static inline uint16_t mread16(struct ns8070 *cpu, uint16_t addr)
@@ -79,24 +58,7 @@ static inline uint16_t mread16(struct ns8070 *cpu, uint16_t addr)
 
 static inline void mwrite(struct ns8070 *cpu, uint16_t addr, uint8_t val)
 {
-	if (addr == 0xFCFF) {
-    	val &= 0x7F;
-		ns8070_emu_putc(val);
-		return;
-    }
-    if (addr >= 0xFFC0) {
-        cpu->rom[addr] = val;
-        return;
-	}
-	if (addr < 0xA00) {
-		if (cpu->trace) {
-			fprintf(stderr, "Write to ROM 0x%04X<-%02X\n", addr, val);
-		}
-		return;
-	}
-    if (addr < RAM_END) {
-        cpu->rom[addr] = val;
-	}
+	cpu->rom[addr] = val;
 }
 
 void flag_change(struct ns8070 *cpu, uint8_t fbits)
@@ -133,7 +95,7 @@ static void mul32(struct ns8070 *cpu)
     
 }
 
-static uint8_t maths8add(struct ns8070 *cpu, uint8_t a, uint8_t b, uint8_t r)
+static inline uint8_t maths8add(struct ns8070 *cpu, uint8_t a, uint8_t b, uint8_t r)
 {
     cpu->s &= ~(S_CL|S_OV);
     if (r & 0x80) {
@@ -152,7 +114,7 @@ static uint8_t maths8add(struct ns8070 *cpu, uint8_t a, uint8_t b, uint8_t r)
     return r;
 }
 
-static uint8_t maths8sub(struct ns8070 *cpu, uint8_t a, uint8_t b, uint8_t r)
+static inline uint8_t maths8sub(struct ns8070 *cpu, uint8_t a, uint8_t b, uint8_t r)
 {
     cpu->s &= ~(S_CL|S_OV);
     if (a & 0x80) {
@@ -172,7 +134,7 @@ static uint8_t maths8sub(struct ns8070 *cpu, uint8_t a, uint8_t b, uint8_t r)
     return r;
 }
 
-static void maths16ea(struct ns8070 *cpu, uint16_t val, int dir)
+static inline void maths16ea(struct ns8070 *cpu, uint16_t val, int dir)
 {
     uint16_t ea = (cpu->e << 8) | cpu->a;
     uint32_t r;
@@ -220,7 +182,7 @@ static uint8_t get_s(struct ns8070 *cpu)
     return val;
 }
 
-static uint16_t get_ea(struct ns8070 *cpu)
+static inline uint16_t get_ea(struct ns8070 *cpu)
 {
     uint16_t r = cpu->e << 8;
     r |= cpu->a;
@@ -294,7 +256,15 @@ static char *iname(uint8_t i)
         return "NOP";
     case 0x01:
         return "XCH A,E";
-    case 0x06:
+
+#if 1
+    case 0x02:
+        return "GETC (undef)";
+    case 0x03:
+        return "PUTC (undef)";
+#endif
+	
+	case 0x06:
         return "LD A,S";
     case 0x07:
         return "LD S,A";
@@ -446,13 +416,13 @@ static char *hexsigned(uint8_t v)
  *	of the last byte of the call and is why we execute from address 1
  */
 
-static void fetch_instruction(struct ns8070 *cpu)
+static inline void fetch_instruction(struct ns8070 *cpu)
 {
     cpu->pc++;
     cpu->i = mread(cpu, cpu->pc);
     if (cpu->trace) {
         fprintf(stderr, "%04X: ", cpu->pc);
-        fprintf(stderr, "%s %02X:%02X %04X %04X %04X %04X",
+        fprintf(stderr, "%s EA:%02X%02X T:%04X P2:%04X P3:%04X SP:%04X",
             cpu_flags(cpu),
             cpu->e, cpu->a, cpu->t, cpu->p2, cpu->p3, cpu->sp);
         fprintf(stderr, " :%s ", iname(cpu->i));
@@ -609,12 +579,12 @@ static uint16_t get_imm16(struct ns8070 *cpu)
 /* 84 (8C) (94) (9C) A4 (AC) B4 BC are data 2
    C4 D4 E4 F4 and (CC) DC (EC) FC are data 1 */
    
-static unsigned int execute_high(struct ns8070 *cpu)
+static inline unsigned int execute_high(struct ns8070 *cpu)
 {
     uint8_t mode = cpu->i & 0x07;
     uint8_t op = cpu->i & 0xF8;
     uint16_t val;
-    uint16_t addr;
+    uint16_t addr = 0;
     unsigned int immed = 0;
     unsigned int cost = 0;
 
@@ -733,7 +703,7 @@ static unsigned int execute_high(struct ns8070 *cpu)
 
 /* There does not seem to be a very convenient logic about what operations
    use what memory types.*/
-static unsigned int execute_op(struct ns8070 *cpu)
+static inline unsigned int execute_op(struct ns8070 *cpu)
 {
     uint8_t tmp8;
     uint16_t tmp16;
@@ -752,7 +722,20 @@ static unsigned int execute_op(struct ns8070 *cpu)
         cpu->a = cpu->e;
         cpu->e = tmp8;
         return 5;
-    case 0x06:	/* LD A,S */
+
+#if 1
+    case 0x02:
+		cpu->a = ns8070_emu_getc();
+        return 5;
+//        return "GETC (undef)";
+    case 0x03:
+		ns8070_emu_putc(cpu->a & 0x7f);
+        return 5;
+//        return "PUTC (undef)";
+#endif
+    
+	
+	case 0x06:	/* LD A,S */
         cpu->a = get_s(cpu);
         return 3;
     case 0x07:	/* LD S,A */
@@ -1062,8 +1045,8 @@ unsigned int ns8070_executes(struct ns8070 *cpu)
 {
 	while (1) {
 		/* TODO: timing, ints etc */
-		ns8070_execute_one(cpu);
-		vcount++;
+		clocksum += ns8070_execute_one(cpu);
+		icount++;
 #if 0
 		// for debug.
 		if ( cpu->pc == 0x00d5 ) { dumpreg(cpu);}
@@ -1072,7 +1055,11 @@ unsigned int ns8070_executes(struct ns8070 *cpu)
 		if ( cpu->pc == 0x0046 ) { dumpreg(cpu); exit(1);}
 #endif		
 
-		if((vcount & 0xfffff)==0){
+#ifdef  MAX_ICOUNT
+		if(icount >= MAX_ICOUNT) break;
+#endif
+		
+		if((icount & 0xffffLL)==0){
 			ns8070_emu_chario();
 			if(done) {
 				break;
@@ -1081,6 +1068,29 @@ unsigned int ns8070_executes(struct ns8070 *cpu)
 	}
 	return 0;
 }
+
+#ifdef _MSDOS_
+
+void print_vcount(int64_t usec)
+{
+	fprintf(stderr,	"\n");
+	fprintf(stderr,	"icount = %I64d\n",icount);
+	fprintf(stderr,	"clocks = %I64d\n",clocksum);
+	fprintf(stderr,	"  usec = %I64d\n",usec  );
+	fprintf(stderr,	"  MIPS = %I64d\n",icount   / usec);
+	fprintf(stderr,	"CPU MHz= %I64d\n",clocksum / usec);
+}
+#else
+void print_vcount(int64_t usec)
+{
+	fprintf(stderr,	"\n");
+	fprintf(stderr,	"icount = %ld\n",icount);
+	fprintf(stderr,	"clocks = %ld\n",clocksum);
+	fprintf(stderr,	"  usec = %ld\n",usec  );
+	fprintf(stderr,	"  MIPS = %ld\n",icount   / usec);
+	fprintf(stderr,	"CPU MHz= %ld\n",clocksum / usec);
+}
+#endif
 
 void ns8070_reset(struct ns8070 *cpu)
 {
@@ -1102,7 +1112,7 @@ struct ns8070 *ns8070_create(uint8_t *rom)
     cpu->rom = rom;
     cpu->trace = 0;
 
-    memcpy(&cpu->rom[0xfd00],iorom,sizeof(iorom));
+//  memcpy(&cpu->rom[0xfd00],iorom,sizeof(iorom));
 	
 	ns8070_reset(cpu);
     return cpu;
